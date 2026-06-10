@@ -24,7 +24,7 @@ export class SpatViewModel {
   // Zone-level display gate driven by entry/exit line crossing.
   private zoneDisplayState: Map<string, boolean> = new Map();
 
-  private readonly FAST_UPDATE_INTERVAL = 250;
+  private readonly FAST_UPDATE_INTERVAL = 500;
   private readonly ZONE_CHECK_THROTTLE = 100;
 
   constructor() {
@@ -53,10 +53,6 @@ export class SpatViewModel {
       const crossedEntry = SpatZoneService.crossesEntryLine(prevPos, currPos, zone);
       const crossedExit = SpatZoneService.crossesExitLine(prevPos, currPos, zone);
 
-      if (!crossedEntry && !crossedExit) {
-        continue;
-      }
-
       const previousDisplayState = this.zoneDisplayState.get(zone.id) === true;
 
       let nextDisplayState = previousDisplayState;
@@ -71,12 +67,6 @@ export class SpatViewModel {
 
       if (nextDisplayState !== previousDisplayState) {
         this.zoneDisplayState.set(zone.id, nextDisplayState);
-
-        if (nextDisplayState) {
-          console.log(`🟢 [SPAT] Crossed ENTRY line for zone '${zone.name}' - Display ON`);
-        } else {
-          console.log(`🔴 [SPAT] Crossed EXIT line for zone '${zone.name}' - Display OFF`);
-        }
       }
     }
   }

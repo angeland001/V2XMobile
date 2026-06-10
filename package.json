@@ -48,6 +48,7 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "react-native": "0.76.9",
+    "react-native-curved-bottom-bar": "^3.5.1",
     "react-native-fs": "^2.20.0",
     "react-native-geolocation-service": "^5.3.1",
     "react-native-gesture-handler": "~2.20.2",
@@ -58,7 +59,8 @@
     "react-native-vector-icons": "^10.3.0",
     "react-native-web": "~0.19.13",
     "react-native-webview": "13.12.5",
-    "realm": "^12.14.1"
+    "realm": "^12.14.1",
+    "styled-components": "^6.3.11"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

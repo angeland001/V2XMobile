@@ -11,6 +11,7 @@ interface VRUMarkersProps {
   getMapboxCoordinates: (vru: VRUData) => [number, number];
 }
 
+
 export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive, getMapboxCoordinates }) => {
   if (!isActive || vrus.length === 0) {
     return null;

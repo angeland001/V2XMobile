@@ -21,7 +21,7 @@ export const MainScreen: React.FC<MainScreenProps> = observer(({ viewModel }) =>
         mapViewModel={viewModel.mapViewModel}
         pedestrianDetectorViewModel={viewModel.pedestrianDetectorViewModel}
         testingPedestrianDetectorViewModel={viewModel.testingPedestrianDetectorViewModel}
-        testingVehicleDisplayViewModel={viewModel.vehicleDisplayViewModel}
+        testingVehicleDisplayViewModel={null}
         directionGuideViewModel={viewModel.directionGuideViewModel}
         isTestingMode={viewModel.isTestingMode}
         mainViewModel={viewModel}

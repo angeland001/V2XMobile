@@ -44,6 +44,22 @@ export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewMod
   );
 });
 
+// Separate component to track individual vehicle overlay events
+const VehicleMarkerItem: React.FC<{
+  vehicleId: number;
+  coordinates: [number, number];
+}> = ({ vehicleId, coordinates }) => {
+  return (
+    <MapboxGL.MarkerView
+      id={`sdsm-vehicle-${vehicleId}`}
+      coordinate={coordinates}
+      anchor={{ x: 0.5, y: 0.5 }}
+    >
+      <VehicleIcon />
+    </MapboxGL.MarkerView>
+  );
+};
+
 const styles = StyleSheet.create({
   vehicleIcon: {
     width: 24,

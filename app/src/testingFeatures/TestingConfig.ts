@@ -1,8 +1,8 @@
 // app/src/testingFeatures/TestingConfig.ts
 export const TESTING_CONFIG = {
   // Testing mode toggle
-  USE_TESTING_MODE: false,
-  USE_VEHICLE_TESTING_FEATURE: false,
+  USE_TESTING_MODE: true,
+  USE_VEHICLE_TESTING_FEATURE: true,
 
   // Toggle to show/hide the fixed testing pedestrian
   SHOW_FIXED_PEDESTRIAN: false,
@@ -18,7 +18,7 @@ export const TESTING_CONFIG = {
   
   // Detection Latency Test Configuration
   DETECTION_LATENCY_TEST: {
-    ENABLED: false,
+    ENABLED: true,
     SIMULATION_INTERVAL_MS: 2000,
     MONITORING_INTERVAL_MS: 100,
     RUN_ONCE: false,
@@ -29,7 +29,7 @@ export const TESTING_CONFIG = {
   // ========================================
   LANE_OVERLAYS: {
     SHOW_GEORGIA_LANES: true,    // Toggle Georgia intersection lanes
-    SHOW_HOUSTON_LANES: false,    // Toggle Houston intersection lanes
-    SHOW_LINDSAY_LANES: false,    // Toggle Lindsay intersection lanes
+    SHOW_HOUSTON_LANES: true,    // Toggle Houston intersection lanes
+    SHOW_LINDSAY_LANES: true,    // Toggle Lindsay intersection lanes
   }
 } as const;

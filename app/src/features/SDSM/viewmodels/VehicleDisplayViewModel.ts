@@ -54,8 +54,8 @@ export class VehicleDisplayViewModel {
   
   // Configuration - Georgia only
   private API_URL = 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Georgia';
-  private readonly POLL_DELAY_MS = 100; // 100ms = 10Hz
-  private readonly FETCH_TIMEOUT_MS = 500;
+  private readonly POLL_DELAY_MS = 1000; // 1000ms = 1Hz
+  private readonly FETCH_TIMEOUT_MS = 3000;
   
   // Stability settings
   private readonly MIN_HISTORY_COUNT = 2;
@@ -135,20 +135,20 @@ export class VehicleDisplayViewModel {
    */
   private async runPollingLoop(): Promise<void> {
     this.isPolling = true;
-    
+
     while (this.isActive && this.isPolling) {
       try {
         const data = await this.fetchFromRSU();
-        
+
         if (data) {
           // Successful fetch - reset failure count
           this.consecutiveFailures = 0;
           this.lastSuccessfulFetch = Date.now();
           this.isConnectionHealthy = true;
-          
+
           this.totalMessages++;
           const messageHash = this.createHash(data);
-          
+
           if (messageHash !== this.lastMessageHash) {
             // Process new message with history tracking
             this.updateVehiclesWithHistory(data);
@@ -160,20 +160,23 @@ export class VehicleDisplayViewModel {
         } else {
           // Failed fetch - increment failure count
           this.consecutiveFailures++;
-          
+          if (this.consecutiveFailures === 1 || this.consecutiveFailures % 10 === 0) {
+            console.warn(`[SDSM] Fetch failed (${this.consecutiveFailures} consecutive failures)`);
+          }
           if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES) {
             this.isConnectionHealthy = false;
           }
         }
-        
+
         // Always update state
         this.updateObjectsConfidence();
         this.updateObservableState();
-        
+
       } catch (error) {
         this.consecutiveFailures++;
-        
+
         if (error instanceof Error) {
+          console.error('[SDSM] Poll error:', error.message);
           runInAction(() => {
             this.error = error.message;
           });
@@ -327,7 +330,7 @@ export class VehicleDisplayViewModel {
       const hasEnoughHistory = trackedObject.positionHistory.length >= this.MIN_HISTORY_COUNT;
       const hasBeenSeenLongEnough = (now - trackedObject.firstSeenTime) >= this.MIN_STABLE_TIME_MS;
       
-      trackedObject.isStable = hasEnoughHistory && hasBeenSeenLongEnough;
+      trackedObject.isStable = hasEnoughHistory || hasBeenSeenLongEnough;
     }
   }
   
@@ -449,6 +452,7 @@ export class VehicleDisplayViewModel {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        console.warn(`[SDSM] HTTP ${response.status} from API`);
         return null;
       }
 
@@ -458,6 +462,7 @@ export class VehicleDisplayViewModel {
       clearTimeout(timeoutId);
 
       if (error instanceof Error && error.name === 'AbortError') {
+        console.warn('[SDSM] Request timed out');
         return null;
       }
 

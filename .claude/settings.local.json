@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(head:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(cd:*)"
+    ]
+  }
+}
