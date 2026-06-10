@@ -128,9 +128,9 @@ export class SpatZoneService {
     return name.toLowerCase().includes('houston') ? 'houston' : 'georgia';
   }
 
-  static async loadZonesFromDashboard(intersectionNumber: number = 1): Promise<void> {
+  static async loadZonesFromDashboard(): Promise<void> {
     try {
-      const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/spat-zones?intersection_number=${intersectionNumber}`;
+      const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/spat-zones`;
       const response = await fetch(endpoint, { method: 'GET' });
       if (!response.ok) {
         console.log(`[SPAT] Dashboard zone fetch failed: ${response.status}`);

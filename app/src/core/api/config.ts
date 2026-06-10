@@ -12,5 +12,6 @@ export const API_CONFIG = {
   REDIS_MAP_ENDPOINT: 'http://10.199.1.11:9095/latest/map_events',
 
   // Dashboard backend (SPaT zones authored in Kepler dashboard)
+  // For Android emulator: 10.0.2.2 is the alias for host machine's localhost
   DASHBOARD_API_URL: 'http://10.0.2.2:3001'
 };
