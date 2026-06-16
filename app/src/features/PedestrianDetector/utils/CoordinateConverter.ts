@@ -19,7 +19,7 @@ export class CoordinateConverter {
   static convertRefPointToDecimal(refPoint: RefPoint): [number, number] {
     const lat = refPoint.lat / this.COORDINATE_SCALE;
     const lon = refPoint.lon / this.COORDINATE_SCALE;
-    return [lon, lat]; // Return as [longitude, latitude] for Mapbox
+    return [lon, lat]; // Return as [longitude, latitude] for map rendering.
   }
 
   /**
@@ -37,7 +37,7 @@ export class CoordinateConverter {
       const realLat = refLat + offsetLat;
       
       
-      return [realLon, realLat]; // [longitude, latitude] for Mapbox
+      return [realLon, realLat]; // [longitude, latitude] for map rendering.
     });
   }
 

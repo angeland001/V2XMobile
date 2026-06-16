@@ -1,7 +1,7 @@
 export const API_CONFIG = {
 
-  // Set MAPBOX_ACCESS_TOKEN in your .env file or environment
-  MAPBOX_ACCESS_TOKEN: process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || '',
+  // Set GOOGLE_MAPS_API_KEY in your .env file or environment
+  GOOGLE_MAPS_API_KEY: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '',
 
   SERVER_URL: 'http://10.0.2.2:5000',
   API_URL: 'http://10.0.2.2:5000/api',

@@ -6,7 +6,8 @@
       "Bash(tail:*)",
       "Bash(grep:*)",
       "WebFetch(domain:www.npmjs.com)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(npx tsc *)"
     ]
   }
 }

@@ -1,80 +1,59 @@
 // app/src/features/SDSM/views/VehicleMarkers.tsx
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
-import MapboxGL from '@rnmapbox/maps';
+import { StyleSheet, View } from 'react-native';
+import { Marker } from 'react-native-maps';
 import { observer } from 'mobx-react-lite';
 import { VehicleDisplayViewModel } from '../viewmodels/VehicleDisplayViewModel';
+import { isValidLngLat, toGoogleLatLng } from '../../../core/maps/coordinates';
 
 interface VehicleMarkersProps {
   viewModel: VehicleDisplayViewModel;
 }
 
+const CIRCLE_STYLE = {
+  circleRadius: 10,
+  circleColor: '#3B82F6',
+  circleStrokeWidth: 3,
+  circleStrokeColor: '#FFFFFF',
+} as const;
+
 export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewModel }) => {
-  if (!viewModel?.isActive || viewModel.vehicles.length === 0) {
-    return null;
-  }
+  if (!viewModel?.isActive || viewModel.vehicles.length === 0) return null;
+
+  const vehicles = viewModel.vehicles
+    .map((vehicle) => {
+      const coords = viewModel.getMapCoordinates(vehicle);
+      if (!isValidLngLat(coords) || coords[0] === 0 || coords[1] === 0) return null;
+      return { id: String(vehicle.id), coordinate: toGoogleLatLng(coords) };
+    })
+    .filter(Boolean);
+
+  if (vehicles.length === 0) return null;
 
   return (
     <>
-      {viewModel.vehicles.map((vehicle) => {
-        const mapboxCoords = viewModel.getMapboxCoordinates(vehicle);
-
-        // Safety check for coordinates
-        if (!mapboxCoords || mapboxCoords.length !== 2 ||
-            typeof mapboxCoords[0] !== 'number' ||
-            typeof mapboxCoords[1] !== 'number' ||
-            mapboxCoords[0] === 0 || mapboxCoords[1] === 0) {
-          return null;
-        }
-
-        return (
-          <MapboxGL.PointAnnotation
-            key={`sdsm-vehicle-${vehicle.id}`}
-            id={`sdsm-vehicle-${vehicle.id}`}
-            coordinate={mapboxCoords}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.vehicleIcon}>
-              <View style={styles.vehicleIconInner} />
-            </View>
-          </MapboxGL.PointAnnotation>
-        );
-      })}
+      {vehicles.map((vehicle) => vehicle && (
+        <Marker
+          key={`sdsm-vehicle-${vehicle.id}`}
+          identifier={`sdsm-vehicle-${vehicle.id}`}
+          coordinate={vehicle.coordinate}
+          anchor={{ x: 0.5, y: 0.5 }}
+          tracksViewChanges={false}
+        >
+          <View style={styles.marker} />
+        </Marker>
+      ))}
     </>
   );
 });
 
-// Separate component to track individual vehicle overlay events
-const VehicleMarkerItem: React.FC<{
-  vehicleId: number;
-  coordinates: [number, number];
-}> = ({ vehicleId, coordinates }) => {
-  return (
-    <MapboxGL.MarkerView
-      id={`sdsm-vehicle-${vehicleId}`}
-      coordinate={coordinates}
-      anchor={{ x: 0.5, y: 0.5 }}
-    >
-      <VehicleIcon />
-    </MapboxGL.MarkerView>
-  );
-};
-
 const styles = StyleSheet.create({
-  vehicleIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: '#3B82F6',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  vehicleIconInner: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#FFFFFF',
+  marker: {
+    width: CIRCLE_STYLE.circleRadius * 2,
+    height: CIRCLE_STYLE.circleRadius * 2,
+    borderRadius: CIRCLE_STYLE.circleRadius,
+    backgroundColor: CIRCLE_STYLE.circleColor,
+    borderWidth: CIRCLE_STYLE.circleStrokeWidth,
+    borderColor: CIRCLE_STYLE.circleStrokeColor,
   },
 });

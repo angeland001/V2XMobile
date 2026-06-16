@@ -20,6 +20,6 @@ export interface IVehicleDisplay {
   vehicleCount: number;
   
   // Methods
-  getMapboxCoordinates(vehicle: any): [number, number];
+  getMapCoordinates(vehicle: any): [number, number];
   cleanup(): void;
 }

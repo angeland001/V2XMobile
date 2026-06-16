@@ -3,10 +3,10 @@ import React from 'react';
 import { StatusBar, SafeAreaView, StyleSheet } from 'react-native';
 import { MainScreen } from '../src/Main/views/screens/MainScreen';
 import { MainViewModel } from '../src/Main/viewmodels/MainViewModel';
-import { initMapbox } from '../src/core/api/mapbox';
+import { initGoogleMaps } from '../src/core/api/googleMaps';
 
-// Initialize Mapbox configuration
-initMapbox();
+// Initialize Google Maps configuration
+initGoogleMaps();
 
 // Create a singleton instance of the MainViewModel
 const mainViewModel = new MainViewModel();

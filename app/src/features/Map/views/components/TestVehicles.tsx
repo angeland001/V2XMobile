@@ -1,6 +1,9 @@
 // app/src/features/Map/views/components/TestVehicles.tsx
 import React from 'react';
-import { ShapeSource, SymbolLayer } from '@rnmapbox/maps';
+import { StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Marker } from 'react-native-maps';
+import { toGoogleLatLng } from '../../../../core/maps/coordinates';
 
 // Configuration and toggle
 const ENABLE_TEST_VEHICLES = true; // Toggle flag - set to false to completely disable
@@ -35,49 +38,23 @@ export const TestVehicles: React.FC<TestVehiclesProps> = () => {
     return null;
   }
 
-  // Create GeoJSON FeatureCollection for the test vehicles
-  const testVehicleGeoJSON = {
-    type: 'FeatureCollection' as const,
-    features: TEST_VEHICLES.map((vehicle) => ({
-      type: 'Feature' as const,
-      id: vehicle.id,
-      properties: {
-        id: vehicle.id,
-        name: vehicle.name,
-        type: 'test-vehicle'
-      },
-      geometry: {
-        type: 'Point' as const,
-        coordinates: vehicle.coordinates
-      }
-    }))
-  };
-
   return (
-    <ShapeSource
-      id="test-vehicles-source"
-      shape={testVehicleGeoJSON}
-    >
-      <SymbolLayer
-        id="test-vehicles-layer"
-        style={{
-          iconImage: 'car-15', // Using Mapbox's built-in car icon
-          iconSize: 1.5,
-          iconColor: '#FF6B35', // Distinct orange color for test vehicles
-          iconAllowOverlap: true,
-          iconIgnorePlacement: true,
-          textField: ['get', 'name'],
-          textFont: ['Open Sans Regular'],
-          textSize: 12,
-          textColor: '#FFFFFF',
-          textHaloColor: '#000000',
-          textHaloWidth: 1,
-          textOffset: [0, 2],
-          textAllowOverlap: true,
-          textIgnorePlacement: true
-        }}
-      />
-    </ShapeSource>
+    <>
+      {TEST_VEHICLES.map((vehicle) => (
+        <Marker
+          key={vehicle.id}
+          identifier={vehicle.id}
+          coordinate={toGoogleLatLng(vehicle.coordinates)}
+          anchor={{ x: 0.5, y: 0.5 }}
+          title={vehicle.name}
+        >
+          <View style={styles.marker}>
+            <Ionicons name="car" size={16} color="#FFFFFF" />
+          </View>
+          <Text style={styles.label}>{vehicle.name}</Text>
+        </Marker>
+      ))}
+    </>
   );
 };
 
@@ -93,3 +70,25 @@ export const isTestVehiclesEnabled = (): boolean => {
 export const getTestVehicleCount = (): number => {
   return ENABLE_TEST_VEHICLES ? TEST_VEHICLES.length : 0;
 };
+
+const styles = StyleSheet.create({
+  marker: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#FF6B35',
+    borderColor: '#FFFFFF',
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  label: {
+    marginTop: 4,
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    textShadowColor: '#000000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+});

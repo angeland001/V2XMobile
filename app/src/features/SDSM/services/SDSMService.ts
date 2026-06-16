@@ -52,14 +52,14 @@ export class SDSMDataService {
       .filter(v => v.coordinates[0] !== 0 && v.coordinates[1] !== 0);
   }
 
-  static toMapboxCoordinates(data: VehicleData | VRUData): [number, number] {
+  static toMapCoordinates(data: VehicleData | VRUData): [number, number] {
     const [lat, lng] = data.coordinates;
     
     if (Math.abs(lat) > 90 || Math.abs(lng) > 180) {
       return [0, 0];
     }
     
-    // Convert [lat, lng] → [lng, lat] for Mapbox
+    // Convert [lat, lng] to [lng, lat] for map rendering.
     return [lng, lat];
   }
 

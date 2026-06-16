@@ -1,4 +1,3 @@
-// app/src/Main/views/screens/MainScreen.tsx
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
 import { observer } from 'mobx-react-lite';
@@ -37,5 +36,3 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
-
-

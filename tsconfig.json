@@ -3,6 +3,7 @@
   "compilerOptions": {
     "jsx": "react",
     "strict": true,
+    "ignoreDeprecations": "6.0",
     "paths": {
       "@/*": [
         "./*"
@@ -11,6 +12,7 @@
   },
   "include": [
     "**/*.ts",
-    "**/*.tsx"
-, "app/src/features/DriverView/views/components/DriverViewButton.tsx"  ]
+    "**/*.tsx",
+    "app/src/features/DriverView/views/components/DriverViewButton.tsx"
+  ]
 }

@@ -11,6 +11,7 @@ import { VehicleDisplayViewModel } from '../../features/SDSM/viewmodels/VehicleD
 import { LanesViewModel } from '../../features/Lanes';
 import { SpatViewModel } from '../../features/SpatService/viewModels/SpatViewModel';
 import { SpatZoneService } from '../../features/SpatService/services/SpatZoneService';
+import { TimService } from '../../features/TIM/services/TimService';
 
 export class MainViewModel {
   mapViewModel: MapViewModel;
@@ -20,6 +21,7 @@ export class MainViewModel {
   vehicleDisplayViewModel: VehicleDisplayViewModel;
   lanesViewModel: LanesViewModel;
   spatViewModel: SpatViewModel;
+  timService: TimService;
   private positionSyncInterval: NodeJS.Timeout | null = null;
   
   isTestingMode: boolean = TESTING_CONFIG.USE_TESTING_MODE;
@@ -29,6 +31,7 @@ export class MainViewModel {
     this.vehicleDisplayViewModel = new VehicleDisplayViewModel();
     this.lanesViewModel = new LanesViewModel();
     this.spatViewModel = new SpatViewModel();
+    this.timService = new TimService();
     
     if (TESTING_CONFIG.USE_TESTING_MODE) {
       this.testingPedestrianDetectorViewModel = new TestingPedestrianDetectorViewModel();
@@ -46,8 +49,7 @@ export class MainViewModel {
     this.startApisOnLaunch();
     this.startPedestrianMonitoring();
     this.startSpatMonitoring();
-
-
+    this.timService.start();
   }
   
   /**
@@ -91,11 +93,11 @@ export class MainViewModel {
         this.spatViewModel.startMonitoring();
 
         this.positionSyncInterval = setInterval(() => {
-          if (this.userLocation.latitude !== 0 && this.userLocation.longitude !== 0) {
-            this.spatViewModel.setUserPosition([
-              this.userLocation.latitude,
-              this.userLocation.longitude
-            ]);
+          const { latitude, longitude } = this.userLocation;
+          if (latitude !== 0 && longitude !== 0) {
+            this.spatViewModel.setUserPosition([latitude, longitude]);
+            const heading = this.mapViewModel.headingValid ? this.mapViewModel.userHeading : null;
+            this.timService.checkProximity(latitude, longitude, heading);
           }
         }, 500);
       } else {
@@ -176,7 +178,8 @@ export class MainViewModel {
     }
 
     this.spatViewModel.cleanup();
-    
+    this.timService.stop();
+
     if (this.isTestingMode && this.testingPedestrianDetectorViewModel) {
       this.testingPedestrianDetectorViewModel.cleanup();
     } else if (!this.isTestingMode && this.pedestrianDetectorViewModel) {
