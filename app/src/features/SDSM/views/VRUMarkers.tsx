@@ -1,67 +1,61 @@
 // app/src/features/SDSM/views/VRUMarkers.tsx
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
-import MapboxGL from '@rnmapbox/maps';
+import { StyleSheet, View } from 'react-native';
+import { Marker } from 'react-native-maps';
 import { observer } from 'mobx-react-lite';
 import { VRUData } from '../models/SDSMTypes';
+import { isValidLngLat, toGoogleLatLng } from '../../../core/maps/coordinates';
 
 interface VRUMarkersProps {
   vrus: VRUData[];
   isActive: boolean;
-  getMapboxCoordinates: (vru: VRUData) => [number, number];
+  getMapCoordinates: (vru: VRUData) => [number, number];
 }
 
+const CIRCLE_STYLE = {
+  circleRadius: 9,
+  circleColor: '#FF6B35',
+  circleStrokeWidth: 3,
+  circleStrokeColor: '#FFFFFF',
+} as const;
 
-export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive, getMapboxCoordinates }) => {
-  if (!isActive || vrus.length === 0) {
-    return null;
-  }
+export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive, getMapCoordinates }) => {
+  if (!isActive || vrus.length === 0) return null;
+
+  const markers = vrus
+    .map((vru) => {
+      const coords = getMapCoordinates(vru);
+      if (!isValidLngLat(coords) || coords[0] === 0 || coords[1] === 0) return null;
+      return { id: String(vru.id), coordinate: toGoogleLatLng(coords) };
+    })
+    .filter(Boolean);
+
+  if (markers.length === 0) return null;
 
   return (
     <>
-      {vrus.map((vru) => {
-        const mapboxCoords = getMapboxCoordinates(vru);
-
-        // Safety check for coordinates
-        if (!mapboxCoords || mapboxCoords.length !== 2 ||
-            typeof mapboxCoords[0] !== 'number' ||
-            typeof mapboxCoords[1] !== 'number' ||
-            mapboxCoords[0] === 0 || mapboxCoords[1] === 0) {
-          return null;
-        }
-
-        return (
-          <MapboxGL.PointAnnotation
-            key={`sdsm-vru-${vru.id}`}
-            id={`sdsm-vru-${vru.id}`}
-            coordinate={mapboxCoords}
-            anchor={{ x: 0.5, y: 0.5 }}
-          >
-            <View style={styles.vruIcon}>
-              <View style={styles.vruIconInner} />
-            </View>
-          </MapboxGL.PointAnnotation>
-        );
-      })}
+      {markers.map((marker) => marker && (
+        <Marker
+          key={`sdsm-vru-${marker.id}`}
+          identifier={`sdsm-vru-${marker.id}`}
+          coordinate={marker.coordinate}
+          anchor={{ x: 0.5, y: 0.5 }}
+          tracksViewChanges={false}
+        >
+          <View style={styles.marker} />
+        </Marker>
+      ))}
     </>
   );
 });
 
 const styles = StyleSheet.create({
-  vruIcon: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#FF6B35',
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  vruIconInner: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#FFFFFF',
+  marker: {
+    width: CIRCLE_STYLE.circleRadius * 2,
+    height: CIRCLE_STYLE.circleRadius * 2,
+    borderRadius: CIRCLE_STYLE.circleRadius,
+    backgroundColor: CIRCLE_STYLE.circleColor,
+    borderWidth: CIRCLE_STYLE.circleStrokeWidth,
+    borderColor: CIRCLE_STYLE.circleStrokeColor,
   },
 });

@@ -24,9 +24,9 @@ export class LaneRenderingService {
   }
 
   /**
-   * Generate Mapbox line layer style using default lane style
+   * Generate map line style using default lane style
    */
-  static createLineLayerStyle(): any {
+  static createLineStyle(): any {
     return {
       lineColor: DEFAULT_LANE_STYLE.color,
       lineWidth: DEFAULT_LANE_STYLE.width,

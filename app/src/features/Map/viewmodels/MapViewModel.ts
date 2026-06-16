@@ -9,6 +9,7 @@ type HeadingSubscription = { remove: () => void };
 export class MapViewModel {
   userLocation: Coordinate = { longitude: -85.2749, latitude: 35.0458 };
   userHeading: number = 0;
+  headingValid: boolean = false;
   isInitialized: boolean = false;
   loading: boolean = false;
   showCrosswalkPolygon: boolean = false; // Toggle for polygon visibility
@@ -16,26 +17,11 @@ export class MapViewModel {
 
   constructor() {
     makeAutoObservable(this);
-    this.init();
-  }
-
-  async init() {
-    try {
-      const hasPermission = await LocationService.requestPermission();
-      if (hasPermission) {
-        await this.getCurrentLocation();
-        // Start tracking heading
-        this.startHeadingTracking();
-      } else {
-        runInAction(() => {
-          this.isInitialized = true;
-        });
-      }
-    } catch (error) {
-      runInAction(() => {
-        this.isInitialized = true;
-      });
-    }
+    // isInitialized is set immediately — location permission and tracking
+    // are owned by MapViewComponent to avoid double permission requests.
+    runInAction(() => {
+      this.isInitialized = true;
+    });
   }
 
   // Start tracking device heading
@@ -45,6 +31,7 @@ export class MapViewModel {
     this.headingSubscription = LocationService.watchHeadingUpdates((heading) => {
       runInAction(() => {
         this.userHeading = heading;
+        this.headingValid = true;
       });
     });
   }
@@ -72,9 +59,6 @@ export class MapViewModel {
         });
         return location;
       } else {
-        // Silently fall back to default location instead of showing an error
-        // This commonly happens on emulators without location configured
-        console.log('Location unavailable, using default location');
         runInAction(() => {
           this.isInitialized = true;
         });
@@ -92,9 +76,9 @@ export class MapViewModel {
 
   setUserLocation(location: Coordinate) {
     this.userLocation = location;
-    // Update heading if available
     if (location.heading !== undefined) {
       this.userHeading = location.heading;
+      this.headingValid = true;
     }
   }
 

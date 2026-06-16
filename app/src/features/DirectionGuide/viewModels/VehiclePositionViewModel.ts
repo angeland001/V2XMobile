@@ -69,8 +69,8 @@ export class VehiclePositionViewModel {
     if (this._lastUpdateTime % 10 === 1) {
     }
     
-    // Notify callbacks of position change
-    if (isValid && this.hasPositionChanged) {
+    // Only propagate if the vehicle actually moved ≥5 m (filters GPS noise)
+    if (isValid && this.isMoving(5)) {
       this.notifyPositionChange(position);
     }
   }
@@ -120,9 +120,9 @@ export class VehiclePositionViewModel {
   }
   
   /**
-   * Check if vehicle is moving
+   * Check if vehicle is moving (threshold in metres)
    */
-  isMoving(threshold: number = 0.000001): boolean {
+  isMoving(threshold: number = 5): boolean {
     return this.getDistanceMoved() > threshold;
   }
   
@@ -188,16 +188,20 @@ export class VehiclePositionViewModel {
   }
   
   /**
-   * Calculate distance between two positions
+   * Haversine distance between two [lat, lng] positions, returns metres.
    */
   private calculateDistance(pos1: [number, number], pos2: [number, number]): number {
+    const R = 6371000;
     const [lat1, lng1] = pos1;
     const [lat2, lng2] = pos2;
-    
-    return Math.sqrt(
-      Math.pow(lat2 - lat1, 2) + 
-      Math.pow(lng2 - lng1, 2)
-    );
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lng2 - lng1) * Math.PI) / 180;
+    const a =
+      Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+      Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
   
   /**

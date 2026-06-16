@@ -32,9 +32,9 @@ export class SDSMDataService {
       .filter(v => v.coordinates[0] !== 0 && v.coordinates[1] !== 0);
   }
 
-  static toMapboxCoordinates(data: VehicleData | VRUData): [number, number] {
+  static toMapCoordinates(data: VehicleData | VRUData): [number, number] {
     const [lat, lng] = data.coordinates;
-    return [lng, lat]; // Mapbox expects [lng, lat]
+    return [lng, lat]; // Map rendering uses [lng, lat] internally.
   }
 
   static hasVehicleChanged(oldVehicle: VehicleData, newVehicle: VehicleData): boolean {

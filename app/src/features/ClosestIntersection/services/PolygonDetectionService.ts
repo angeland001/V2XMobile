@@ -6,7 +6,7 @@ export class PolygonDetectionService {
   /**
    * Check if a point is inside a polygon using ray casting algorithm
    * @param point [lat, lng] format from GPS
-   * @param polygon Array of [lng, lat] coordinates (GeoJSON/Mapbox standard)
+   * @param polygon Array of [lng, lat] coordinates.
    */
   static isPointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
     const [lat, lng] = point;

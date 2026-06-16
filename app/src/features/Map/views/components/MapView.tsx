@@ -2,8 +2,11 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { Ionicons } from "@expo/vector-icons";
-import MapboxGL from "@rnmapbox/maps";
+import RNMapView, {
+  Polygon,
+  PROVIDER_GOOGLE,
+  type MapType,
+} from "react-native-maps";
 import { observer } from "mobx-react-lite";
 import * as Location from "expo-location";
 import { MapViewModel } from "../../viewmodels/MapViewModel";
@@ -28,6 +31,65 @@ import { MapOverlayMenu } from "./MapOverlayMenu";
 import { SearchBar } from "./SearchBar";
 import { ZoomControls } from "./mapoverlay/ZoomControls";
 import { TrafficLightPanel } from "../../../preemption/components/TrafficLightPanel";
+import { PreemptionViewModel } from "../../../preemption/viewModels/PreemptionViewModel";
+import { PreemptionToggle } from "../../../preemption/components/PreemptionToggle";
+import { SpatZone, SpatZoneService } from "../../../SpatService/services/SpatZoneService";
+import { SignalState } from "../../../SpatService/models/SpatModels";
+import { toGooglePath, toGooglePathFlexible } from "../../../../core/maps/coordinates";
+
+// ---------------------------------------------------------------------------
+// TIMLayer — renders active TIM zones, colored by category
+// ---------------------------------------------------------------------------
+
+const TIM_CATEGORY_STYLES = {
+  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444' },
+  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B' },
+  informational: { fill: 'rgba(59, 130, 246, 0.25)', stroke: '#3B82F6' },
+} as const;
+
+const DARK_GOOGLE_MAP_STYLE = [
+  { elementType: "geometry", stylers: [{ color: "#1f2937" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#d1d5db" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#111827" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#374151" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#f3f4f6" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f172a" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#263244" }] },
+];
+
+interface TIMLayerProps {
+  mainViewModel: MainViewModel | null | undefined;
+}
+
+const TIMLayer: React.FC<TIMLayerProps> = observer(({ mainViewModel }) => {
+  const tims = mainViewModel?.timService.activeTims;
+  if (!tims || tims.length === 0) return null;
+
+  return (
+    <>
+      {tims.map((tim) => {
+        const style = TIM_CATEGORY_STYLES[tim.category] ?? TIM_CATEGORY_STYLES.informational;
+        const coordinates = toGooglePathFlexible(tim.geometry.coordinates[0] as [number, number][]);
+        const holes = tim.geometry.coordinates
+          .slice(1)
+          .map((ring) => toGooglePathFlexible(ring as [number, number][]))
+          .filter((ring) => ring.length >= 3);
+        if (coordinates.length < 3) return null;
+
+        return (
+          <Polygon
+            key={`tim-${tim.id}`}
+            coordinates={coordinates}
+            holes={holes}
+            fillColor={style.fill}
+            strokeColor={style.stroke}
+            strokeWidth={2.5}
+          />
+        );
+      })}
+    </>
+  );
+});
 
 // ---------------------------------------------------------------------------
 // CrosswalkLayer — own observer so it only re-renders when VRUs change (1Hz)
@@ -66,27 +128,21 @@ const CrosswalkLayer: React.FC<CrosswalkLayerProps> = observer(
               coordinates: [polygonCoords],
             },
           };
+          const coordinates = toGooglePath(shape.geometry.coordinates[0]);
+          if (coordinates.length < 3) return null;
+
           return (
-            <MapboxGL.ShapeSource
+            <Polygon
               key={`crosswalk-${index}`}
-              id={`crosswalk-polygon-source-${index}`}
-              shape={shape}
-            >
-              <MapboxGL.FillLayer
-                id={`crosswalk-polygon-fill-${index}`}
-                style={{
-                  fillColor:
-                    count > 0
-                      ? "rgba(255, 59, 48, 0.4)"
-                      : "rgba(255, 255, 0, 0.4)",
-                  fillOutlineColor: "#FFCC00",
-                }}
-              />
-              <MapboxGL.LineLayer
-                id={`crosswalk-polygon-outline-${index}`}
-                style={{ lineColor: "#FFCC00", lineWidth: 2 }}
-              />
-            </MapboxGL.ShapeSource>
+              coordinates={coordinates}
+              fillColor={
+                count > 0
+                  ? "rgba(255, 59, 48, 0.4)"
+                  : "rgba(255, 255, 0, 0.4)"
+              }
+              strokeColor="#FFCC00"
+              strokeWidth={2}
+            />
           );
         })}
       </>
@@ -121,6 +177,68 @@ const PedestrianWarning: React.FC<PedestrianWarningProps> = observer(
 );
 
 // ---------------------------------------------------------------------------
+// SpatZoneLayer — renders zone polygons on the map, colored by signal state
+// ---------------------------------------------------------------------------
+
+interface SpatZoneLayerProps {
+  zones: SpatZone[];
+  activeSpatZoneId: string | null;
+  spatViewModel: SpatViewModel;
+}
+
+const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpatZoneId, spatViewModel }) => {
+  return (
+    <>
+      {zones.map((zone) => {
+        const isActive = zone.id === activeSpatZoneId;
+
+        let fillColor: string;
+        let lineColor: string;
+        let lineWidth: number;
+
+        if (isActive) {
+          switch (spatViewModel.signalState) {
+            case SignalState.GREEN:
+              fillColor = 'rgba(34, 197, 94, 0.22)';
+              lineColor = '#22c55e';
+              break;
+            case SignalState.RED:
+              fillColor = 'rgba(239, 68, 68, 0.22)';
+              lineColor = '#ef4444';
+              break;
+            case SignalState.YELLOW:
+              fillColor = 'rgba(234, 179, 8, 0.22)';
+              lineColor = '#eab308';
+              break;
+            default:
+              fillColor = 'rgba(255, 140, 0, 0.15)';
+              lineColor = '#FF8C00';
+          }
+          lineWidth = 2.5;
+        } else {
+          fillColor = 'rgba(59, 130, 246, 0.08)';
+          lineColor = 'rgba(59, 130, 246, 0.45)';
+          lineWidth = 1.5;
+        }
+
+        const coordinates = toGooglePath(zone.polygon);
+        if (coordinates.length < 3) return null;
+
+        return (
+          <Polygon
+            key={`spat-zone-${zone.id}`}
+            coordinates={coordinates}
+            fillColor={fillColor}
+            strokeColor={lineColor}
+            strokeWidth={lineWidth}
+          />
+        );
+      })}
+    </>
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Main MapViewComponent
 // ---------------------------------------------------------------------------
 
@@ -137,166 +255,85 @@ interface MapViewProps {
   children?: React.ReactNode;
 }
 
-export const MapViewComponent: React.FC<MapViewProps> = observer(({
-  mapViewModel,
-  pedestrianDetectorViewModel,
-  testingPedestrianDetectorViewModel,
-  testingVehicleDisplayViewModel,
-  directionGuideViewModel,
-  isTestingMode,
-  mainViewModel,
-  spatViewModel: providedSpatViewModel,
-  lanesViewModel: providedLanesViewModel,
-  children
-}) => {
-  const mapRef = useRef<MapboxGL.MapView>(null);
-  const cameraRef = useRef<MapboxGL.Camera>(null);
-  const spatViewModelRef = useRef<SpatViewModel>(new SpatViewModel());
-  const lanesViewModelRef = useRef<LanesViewModel>(new LanesViewModel());
-  const preemptionViewModelRef = useRef<PreemptionViewModel>(new PreemptionViewModel());
-  
-  const spatViewModel = providedSpatViewModel || spatViewModelRef.current;
-  const lanesViewModel = providedLanesViewModel || lanesViewModelRef.current;
-  const preemptionViewModel = preemptionViewModelRef.current;
+export const MapViewComponent: React.FC<MapViewProps> = observer(
+  ({
+    mapViewModel,
+    pedestrianDetectorViewModel,
+    testingPedestrianDetectorViewModel,
+    testingVehicleDisplayViewModel,
+    directionGuideViewModel,
+    isTestingMode,
+    mainViewModel,
+    spatViewModel: providedSpatViewModel,
+    lanesViewModel: providedLanesViewModel,
+    children,
+  }) => {
+    const mapRef = useRef<RNMapView>(null);
+    const spatViewModelRef = useRef<SpatViewModel>(new SpatViewModel());
+    const lanesViewModelRef = useRef<LanesViewModel>(new LanesViewModel());
+    const preemptionViewModelRef = useRef<PreemptionViewModel>(new PreemptionViewModel());
 
-  const [userPosition, setUserPosition] = useState<[number, number]>([
-    mapViewModel.userLocation.latitude, 
-    mapViewModel.userLocation.longitude
-  ]);
-  const [spatZones, setSpatZones] = useState<SpatZone[]>(() => SpatZoneService.getActiveZones());
-  const [activeSpatZoneId, setActiveSpatZoneId] = useState<string | null>(null);
+    const spatViewModel = providedSpatViewModel || spatViewModelRef.current;
+    const lanesViewModel = providedLanesViewModel || lanesViewModelRef.current;
+    const preemptionViewModel = preemptionViewModelRef.current;
 
-  const lastCameraUpdate = useRef<number>(0);
-  const CAMERA_UPDATE_THROTTLE = 2000;
+    const [userPosition, setUserPosition] = useState<[number, number]>([
+      mapViewModel.userLocation.latitude,
+      mapViewModel.userLocation.longitude,
+    ]);
+    const [spatZones, setSpatZones] = useState<SpatZone[]>(() => SpatZoneService.getActiveZones());
+    const [activeSpatZoneId, setActiveSpatZoneId] = useState<string | null>(null);
 
-  const activeDetector = isTestingMode ? testingPedestrianDetectorViewModel : pedestrianDetectorViewModel;
-  const SHOW_SDSM_VEHICLES = true;
+    const [isDarkMode, setIsDarkMode] = useState(false);
+    const [userHeading, setUserHeading] = useState(0);
+    const zoomLevelRef = useRef(17);
 
-
-  const getZonesSignature = (zones: SpatZone[]): string => (
-    zones
-      .map((zone) => `${zone.id}:${zone.name}:${zone.signalGroup}:${zone.polygon.length}:${zone.entryLine?.length || 0}:${zone.exitLine?.length || 0}`)
-      .join('|')
-  );
-
-  const toLngLatLine = (line?: [number, number][]): [number, number][] | null => {
-    if (!line || line.length !== 2) return null;
-    return line.map(([lat, lng]) => [lng, lat]);
-  };
-
-  const createZonePolygonFeature = (zone: SpatZone) => ({
-    type: 'Feature' as const,
-    properties: {
-      zoneId: zone.id,
-      name: zone.name,
-      signalGroup: zone.signalGroup,
-      laneIds: zone.laneIds.join(', '),
-    },
-    geometry: {
-      type: 'Polygon' as const,
-      coordinates: [zone.polygon],
-    },
-  });
-
-  const createLineFeature = (lineCoords: [number, number][], lineType: 'entry' | 'exit') => ({
-    type: 'Feature' as const,
-    properties: {
-      lineType,
-    },
-    geometry: {
-      type: 'LineString' as const,
-      coordinates: lineCoords,
-    },
-  });
-
-  const shouldShowSDSMForViewModel = (_viewModel: VehicleDisplayViewModel): boolean => {
-    if (!SHOW_SDSM_VEHICLES || !TESTING_CONFIG.ENABLE_SDSM_API) {
-      return false;
-    }
-    return true;
-  };
-
-  const updateCameraPosition = (position: [number, number]) => {
-    const now = Date.now();
-    
-    if (now - lastCameraUpdate.current < CAMERA_UPDATE_THROTTLE) {
-      return;
-    }
-    
-    lastCameraUpdate.current = now;
-    
-    if (cameraRef.current && position[0] !== 0 && position[1] !== 0) {
-      cameraRef.current.setCamera({
-        centerCoordinate: [position[1], position[0]],
-        zoomLevel: 17,
-        animationDuration: 1500,
-      });
+    const handleZoomIn = () => {
+      zoomLevelRef.current = Math.min(zoomLevelRef.current + 1, 22);
+      mapRef.current?.animateCamera({ zoom: zoomLevelRef.current }, { duration: 300 });
     };
 
-    syncZones();
-    const intervalId = setInterval(syncZones, 1000);
-
-    return () => clearInterval(intervalId);
-  }, []);
-
-  // Cleanup preemption view model on unmount
-  useEffect(() => {
-    return () => {
-      preemptionViewModel.destroy();
+    const handleZoomOut = () => {
+      zoomLevelRef.current = Math.max(zoomLevelRef.current - 1, 1);
+      mapRef.current?.animateCamera({ zoom: zoomLevelRef.current }, { duration: 300 });
     };
-  }, [preemptionViewModel]);
-
-  useEffect(() => {
-    if (userPosition[0] === 0 || userPosition[1] === 0) return;
-
-    const activeZone = SpatZoneService.findZoneForPosition(userPosition);
-    const nextZoneId = activeZone?.id || null;
 
     const handleLocateUser = () => {
       if (userPosition[0] !== 0 && userPosition[1] !== 0) {
-        cameraRef.current?.setCamera({
-          centerCoordinate: [userPosition[1], userPosition[0]],
-          zoomLevel: 17,
-          animationDuration: 600,
-        });
+        mapRef.current?.animateCamera(
+          {
+            center: { latitude: userPosition[0], longitude: userPosition[1] },
+            zoom: 17,
+          },
+          { duration: 600 },
+        );
         zoomLevelRef.current = 17;
       }
     };
+
     const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("outdoors");
 
-  useEffect(() => {
-    preemptionViewModel.syncPosition(userPosition, spatZones);
-  }, [preemptionViewModel, userPosition, spatZones]);
+    const cycleMapLayer = () => {
+      setMapLayer((prev) => {
+        if (prev === "outdoors") return "satellite";
+        if (prev === "satellite") return "streets";
+        return "outdoors";
+      });
+    };
 
-    const MAP_STYLE_URLS = {
-      outdoors: "mapbox://styles/mapbox/outdoors-v12",
-      satellite: "mapbox://styles/mapbox/satellite-streets-v12",
-      streets: "mapbox://styles/mapbox/streets-v12",
-      dark: "mapbox://styles/mapbox/dark-v11",
+    const GOOGLE_MAP_TYPES: Record<typeof mapLayer, MapType> = {
+      outdoors: "terrain",
+      satellite: "hybrid",
+      streets: "standard",
     };
 
     const lastCameraUpdate = useRef<number>(0);
     const CAMERA_UPDATE_THROTTLE = 2000;
 
-        // Get initial position first
-        try {
-          const initialLocation = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.BestForNavigation,
-          });
-          const { latitude, longitude } = initialLocation.coords;
-          const initialPosition: [number, number] = [latitude, longitude];
-          setUserPosition(initialPosition);
-          updateAllViewModels(initialPosition);
-        } catch (posError) {
-          console.log('[Location] Could not get initial position:', posError);
-          // Fall back to MapViewModel's default location
-          const defaultPosition: [number, number] = [
-            mapViewModel.userLocation.latitude,
-            mapViewModel.userLocation.longitude,
-          ];
-          setUserPosition(defaultPosition);
-          updateAllViewModels(defaultPosition);
-        }
+    const activeDetector = isTestingMode
+      ? testingPedestrianDetectorViewModel
+      : pedestrianDetectorViewModel;
+    const SHOW_SDSM_VEHICLES = true;
 
     const shouldShowSDSMForViewModel = (
       viewModel: VehicleDisplayViewModel,
@@ -307,6 +344,9 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
     const vehicleDisplayVM =
       mainViewModel?.vehicleDisplayViewModel || testingVehicleDisplayViewModel;
 
+    const arePositionsEqual = (a: [number, number], b: [number, number]) =>
+      Math.abs(a[0] - b[0]) < 0.000001 && Math.abs(a[1] - b[1]) < 0.000001;
+
     const updateCameraPosition = (position: [number, number]) => {
       const now = Date.now();
 
@@ -316,13 +356,56 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
 
       lastCameraUpdate.current = now;
 
-      if (cameraRef.current && position[0] !== 0 && position[1] !== 0) {
-        cameraRef.current.setCamera({
-          centerCoordinate: [position[1], position[0]],
-          zoomLevel: 17,
-          animationDuration: 1500,
-        });
+      if (mapRef.current && position[0] !== 0 && position[1] !== 0) {
+        mapRef.current.animateCamera(
+          {
+            center: { latitude: position[0], longitude: position[1] },
+            zoom: 17,
+          },
+          { duration: 1500 },
+        );
       }
+    };
+
+    const handlePositionUpdate = (
+      latitude: number,
+      longitude: number,
+      heading?: number | null,
+    ) => {
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+
+      const newPosition: [number, number] = [latitude, longitude];
+
+      setUserPosition((currentPosition) => {
+        if (!arePositionsEqual(currentPosition, newPosition)) {
+          updateAllViewModels(newPosition);
+          updateCameraPosition(newPosition);
+        }
+        return newPosition;
+      });
+
+      if (heading != null && heading >= 0) {
+        setUserHeading(heading);
+      }
+    };
+
+    const handleLocationUpdate = (location: Location.LocationObject) => {
+      const { latitude, longitude, heading } = location.coords;
+      handlePositionUpdate(latitude, longitude, heading);
+    };
+
+    const handleMapUserLocationChange = (event: {
+      nativeEvent: {
+        coordinate?: {
+          latitude?: number;
+          longitude?: number;
+          heading?: number;
+        };
+      };
+    }) => {
+      const coordinate = event.nativeEvent.coordinate;
+      if (!coordinate?.latitude || !coordinate?.longitude) return;
+      handlePositionUpdate(coordinate.latitude, coordinate.longitude, coordinate.heading);
     };
 
     const updateAllViewModels = (position: [number, number]) => {
@@ -340,39 +423,37 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
       });
     };
 
-    activeDetector.updateVRUData(allVRUs);
-  }, [
-    activeDetector,
-    mainViewModel?.vehicleDisplayViewModel?.vrus,
-    testingVehicleDisplayViewModel?.vrus,
-    testingPedestrianDetectorViewModel?.vrus,
-    TESTING_CONFIG.ENABLE_SDSM_API,
-    TESTING_CONFIG.SHOW_FIXED_PEDESTRIAN
-  ]);
+    // Poll for active spat zones every second
+    useEffect(() => {
+      const syncZones = () => setSpatZones(SpatZoneService.getActiveZones());
+      syncZones();
+      const intervalId = setInterval(syncZones, 1000);
+      return () => clearInterval(intervalId);
+    }, []);
 
-  return (
-    <View style={styles.container}>
-      <MapLegend />
+    // Cleanup preemption view model on unmount
+    useEffect(() => {
+      return () => {
+        preemptionViewModel.destroy();
+      };
+    }, [preemptionViewModel]);
 
-      <MapboxGL.MapView
-        ref={mapRef}
-        style={styles.map}
-        styleURL="mapbox://styles/mapbox/streets-v12"
-        logoEnabled={false}
-        attributionEnabled={false}
-        compassEnabled={false}
-        rotateEnabled={true}
-        scrollEnabled={true}
-        pitchEnabled={true}
-        zoomEnabled={true}
-      >
-        <MapboxGL.Camera
-          ref={cameraRef}
-          centerCoordinate={[-85.3075, 35.0454]}
-          zoomLevel={17}
-          animationMode="flyTo"
-          animationDuration={1500}
-        />
+    // Keep preemption view model in sync with position and zones
+    useEffect(() => {
+      preemptionViewModel.syncPosition(userPosition, spatZones);
+    }, [preemptionViewModel, userPosition, spatZones]);
+
+    // Track which spat zone the user is currently in
+    useEffect(() => {
+      if (userPosition[0] === 0 || userPosition[1] === 0) return;
+      const activeZone = SpatZoneService.findZoneForPosition(userPosition);
+      setActiveSpatZoneId(activeZone?.id || null);
+    }, [userPosition]);
+
+    // Location tracking
+    useEffect(() => {
+      let locationSubscription: Location.LocationSubscription;
+      let emulatorPollInterval: NodeJS.Timeout | null = null;
 
       const setupLocationTracking = async () => {
         try {
@@ -380,32 +461,46 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
           if (status !== "granted") {
             return;
           }
+          const servicesEnabled = await Location.hasServicesEnabledAsync();
+          if (!servicesEnabled) {
+            return;
+          }
+          mapViewModel.startHeadingTracking();
+
+          try {
+            const currentLocation = await Location.getCurrentPositionAsync({
+              accuracy: Location.Accuracy.BestForNavigation,
+            });
+            handleLocationUpdate(currentLocation);
+          } catch {
+            // Continue with watch/poll fallback.
+          }
 
           locationSubscription = await Location.watchPositionAsync(
             {
               accuracy: Location.Accuracy.BestForNavigation,
-              distanceInterval: 2,
+              distanceInterval: 0,
               timeInterval: 500,
             },
-            (location) => {
-              const { latitude, longitude, heading } = location.coords;
-              const newPosition: [number, number] = [latitude, longitude];
-
-              setUserPosition(newPosition);
-              updateAllViewModels(newPosition);
-              updateCameraPosition(newPosition);
-
-              if (heading != null && heading >= 0) {
-                setUserHeading(heading);
-              }
-            },
+            handleLocationUpdate,
           );
+
+          emulatorPollInterval = setInterval(async () => {
+            try {
+              const location = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy.BestForNavigation,
+              });
+              handleLocationUpdate(location);
+            } catch {
+              // Keep the watch subscription as the primary path.
+            }
+          }, 1000);
 
           if (activeDetector && "startMonitoring" in activeDetector) {
             activeDetector.startMonitoring();
           }
-        } catch (error) {
-          // Silent error handling
+        } catch {
+          // Silent
         }
       };
 
@@ -415,6 +510,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
         if (locationSubscription) {
           locationSubscription.remove();
         }
+        if (emulatorPollInterval) {
+          clearInterval(emulatorPollInterval);
+        }
+        mapViewModel.stopHeadingTracking();
         if (activeDetector && "stopMonitoring" in activeDetector) {
           activeDetector.stopMonitoring();
         }
@@ -471,47 +570,34 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
           onCycleLayer={cycleMapLayer}
         />
 
-        <MapboxGL.MapView
+        <PreemptionToggle
+          enabled={preemptionViewModel.isEnabled}
+          onToggle={(enabled) => {
+            preemptionViewModel.toggleEnabled(enabled);
+          }}
+        />
+
+        <RNMapView
           ref={mapRef}
           style={styles.map}
-          styleURL={isDarkMode ? MAP_STYLE_URLS.dark : MAP_STYLE_URLS[mapLayer]}
-          logoEnabled={false}
-          attributionEnabled={false}
-          compassEnabled={false}
+          provider={PROVIDER_GOOGLE}
+          mapType={GOOGLE_MAP_TYPES[mapLayer]}
+          customMapStyle={isDarkMode ? DARK_GOOGLE_MAP_STYLE : []}
+          initialRegion={{
+            latitude: 35.0454,
+            longitude: -85.3075,
+            latitudeDelta: 0.005,
+            longitudeDelta: 0.005,
+          }}
+          showsUserLocation={true}
+          showsMyLocationButton={false}
+          onUserLocationChange={handleMapUserLocationChange}
+          showsCompass={false}
           rotateEnabled={true}
           scrollEnabled={true}
           pitchEnabled={true}
           zoomEnabled={true}
         >
-          <MapboxGL.Camera
-            ref={cameraRef}
-            centerCoordinate={[-85.3075, 35.0454]}
-            zoomLevel={17}
-            animationMode="flyTo"
-            animationDuration={1500}
-          />
-
-          {userPosition[0] !== 0 && userPosition[1] !== 0 && (
-            <MapboxGL.MarkerView
-              id="vehicle-position"
-              coordinate={[userPosition[1], userPosition[0]]}
-              anchor={{ x: 0.5, y: 0.5 }}
-            >
-              <View style={styles.userMarkerWrapper}>
-                <View style={styles.markerGlow}>
-                  <View style={styles.markerCircle}>
-                    <Ionicons
-                      name="navigate"
-                      size={18}
-                      color="#ffffff"
-                      style={{ transform: [{ rotate: `${userHeading - 45}deg` }] }}
-                    />
-                  </View>
-                </View>
-              </View>
-            </MapboxGL.MarkerView>
-          )}
-
           {/* Crosswalk polygons — isolated observer, re-renders only when VRUs change */}
           <CrosswalkLayer
             vehicleDisplayVM={vehicleDisplayVM ?? null}
@@ -519,48 +605,64 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(({
             show={mapViewModel.showCrosswalkPolygon}
           />
 
+          <SpatZoneLayer
+            zones={spatZones}
+            activeSpatZoneId={activeSpatZoneId}
+            spatViewModel={spatViewModel}
+          />
+
+          <TIMLayer mainViewModel={mainViewModel} />
+
           <LaneOverlay lanesViewModel={lanesViewModel} />
 
-      <TestingModeOverlay
-        isTestingMode={isTestingMode}
-        testingVehicleDisplayViewModel={testingVehicleDisplayViewModel}
-      />
+          {mainViewModel?.vehicleDisplayViewModel &&
+            shouldShowSDSMForViewModel(mainViewModel.vehicleDisplayViewModel) && (
+              <VehicleMarkers
+                viewModel={mainViewModel.vehicleDisplayViewModel}
+              />
+            )}
 
-      {/* SpatStatusDisplay - Hidden in favor of TurnGuideDisplay */}
-      {/* <SpatStatusDisplay
-        userPosition={userPosition}
-        spatViewModel={spatViewModel}
-      /> */}
+          {testingVehicleDisplayViewModel &&
+            shouldShowSDSMForViewModel(testingVehicleDisplayViewModel) && (
+              <VehicleMarkers viewModel={testingVehicleDisplayViewModel} />
+            )}
 
-      <TurnGuideDisplay spatViewModel={spatViewModel} />
+          {mainViewModel?.vehicleDisplayViewModel &&
+            shouldShowSDSMForViewModel(mainViewModel.vehicleDisplayViewModel) && (
+              <VRUMarkers
+                vrus={mainViewModel.vehicleDisplayViewModel.vrus}
+                isActive={mainViewModel.vehicleDisplayViewModel.isActive}
+                getMapCoordinates={mainViewModel.vehicleDisplayViewModel.getMapCoordinates.bind(
+                  mainViewModel.vehicleDisplayViewModel,
+                )}
+              />
+            )}
 
-      <PreemptionToggle
-        enabled={preemptionViewModel.isEnabled}
-        onToggle={(enabled) => {
-          preemptionViewModel.toggleEnabled(enabled);
-        }}
-      />
+          {testingVehicleDisplayViewModel &&
+            shouldShowSDSMForViewModel(testingVehicleDisplayViewModel) && (
+              <VRUMarkers
+                vrus={testingVehicleDisplayViewModel.vrus}
+                isActive={testingVehicleDisplayViewModel.isActive}
+                getMapCoordinates={testingVehicleDisplayViewModel.getMapCoordinates.bind(
+                  testingVehicleDisplayViewModel,
+                )}
+              />
+            )}
 
-      {(() => {
-        const vehiclePos: [number, number] = [userPosition[0], userPosition[1]];
-
-        if (userPosition[0] === 0) return null;
-
-        let allVRUs: any[] = [];
-
-        if (TESTING_CONFIG.ENABLE_SDSM_API) {
-          const vehicleDisplayVM = mainViewModel?.vehicleDisplayViewModel || testingVehicleDisplayViewModel;
-          if (vehicleDisplayVM?.vrus && shouldShowSDSMForViewModel(vehicleDisplayVM)) {
-            allVRUs = [...allVRUs, ...vehicleDisplayVM.vrus];
-          }
-        }
-
-        if (TESTING_CONFIG.SHOW_FIXED_PEDESTRIAN && testingPedestrianDetectorViewModel?.vrus) {
-          allVRUs = [...allVRUs, ...testingPedestrianDetectorViewModel.vrus];
-        }
+          {TESTING_CONFIG.SHOW_FIXED_PEDESTRIAN &&
+            testingPedestrianDetectorViewModel && (
+              <VRUMarkers
+                vrus={testingPedestrianDetectorViewModel.vrus}
+                isActive={true}
+                getMapCoordinates={(vru) => [
+                  vru.coordinates[1],
+                  vru.coordinates[0],
+                ]}
+              />
+            )}
 
           {children}
-        </MapboxGL.MapView>
+        </RNMapView>
 
         <TestingModeOverlay
           isTestingMode={isTestingMode}
@@ -583,35 +685,6 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
-  },
-  userMarkerWrapper: {
-    width: 46,
-    height: 46,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  markerGlow: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: "rgba(255, 140, 0, 0.22)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  markerCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: "#FF8C00",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 2.5,
-    borderColor: "#ffffff",
-    shadowColor: "#FF8C00",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.75,
-    shadowRadius: 10,
-    elevation: 10,
   },
   trafficLightAnchor: {
     position: 'absolute',

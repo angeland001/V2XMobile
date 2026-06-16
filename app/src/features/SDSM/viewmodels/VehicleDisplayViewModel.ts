@@ -54,7 +54,7 @@ export class VehicleDisplayViewModel {
   
   // Configuration - Georgia only
   private API_URL = 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Georgia';
-  private readonly POLL_DELAY_MS = 1000; // 1000ms = 1Hz
+  private readonly POLL_DELAY_MS = 100; // 1000ms = 1Hz
   private readonly FETCH_TIMEOUT_MS = 3000;
   
   // Stability settings
@@ -510,10 +510,10 @@ export class VehicleDisplayViewModel {
   }
   
   /**
-   * Convert coordinates for Mapbox
+   * Convert coordinates for map rendering
    */
-  getMapboxCoordinates(data: VehicleData | VRUData): [number, number] {
-    return SDSMDataService.toMapboxCoordinates(data);
+  getMapCoordinates(data: VehicleData | VRUData): [number, number] {
+    return SDSMDataService.toMapCoordinates(data);
   }
   
   /**

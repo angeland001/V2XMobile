@@ -5,8 +5,9 @@ import { Coordinate } from '../models/Location';
 export class LocationService {
   static async requestPermission(): Promise<boolean> {
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      return status === 'granted';
+      const timeout = new Promise<false>((resolve) => setTimeout(() => resolve(false), 10000));
+      const result = Location.requestForegroundPermissionsAsync().then(({ status }) => status === 'granted');
+      return await Promise.race([result, timeout]);
     } catch (error) {
       return false;
     }
@@ -20,7 +21,7 @@ export class LocationService {
       );
 
       const locationPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced // Use Balanced instead of BestForNavigation for simulator
+        accuracy: Location.Accuracy.BestForNavigation,
       });
 
       const location = await Promise.race([locationPromise, timeoutPromise]);
@@ -34,8 +35,7 @@ export class LocationService {
         latitude: location.coords.latitude,
         heading: location.coords.heading !== null ? location.coords.heading : undefined
       };
-    } catch (error) {
-      console.log('Location error:', error);
+    } catch {
       return null;
     }
   }
@@ -57,22 +57,24 @@ export class LocationService {
     }
   }
 
-  // Add method to start watching heading updates
+  // Watch heading updates, throttled to 500ms to avoid saturating the MobX graph
   static watchHeadingUpdates(callback: (heading: number) => void): { remove: () => void } {
-    // Using then() to convert Promise<LocationSubscription> to LocationSubscription
     let subscription: any = null;
+    let lastFired = 0;
+    const THROTTLE_MS = 500;
+
     Location.watchHeadingAsync(headingData => {
+      const now = Date.now();
+      if (now - lastFired < THROTTLE_MS) return;
+      lastFired = now;
       callback(headingData.magHeading || 0);
     }).then(sub => {
       subscription = sub;
     });
-    
-    // Return a LocationSubscription object with a remove method
+
     return {
       remove: () => {
-        if (subscription) {
-          subscription.remove();
-        }
+        if (subscription) subscription.remove();
       }
     };
   }

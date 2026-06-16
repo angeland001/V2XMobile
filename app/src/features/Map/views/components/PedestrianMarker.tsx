@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import MapboxGL from '@rnmapbox/maps';
+import { Marker } from 'react-native-maps';
+import { toGoogleLatLng } from '../../../../core/maps/coordinates';
 
 interface PedestrianMarkerProps {
   id: number;
@@ -23,13 +24,13 @@ export const PedestrianMarker: React.FC<PedestrianMarkerProps> = ({
       return null;
     }
     
-    // Convert from [lat, lon] to [lon, lat] for MapboxGL
-    const mapboxCoords: [number, number] = [coordinates[1], coordinates[0]];
+    // Convert from [lat, lon] to [lon, lat] before adapting to Google Maps.
+    const mapCoordinates: [number, number] = [coordinates[1], coordinates[0]];
     
     return (
-      <MapboxGL.PointAnnotation
-        id={`pedestrian-${id}`}
-        coordinate={mapboxCoords}
+      <Marker
+        identifier={`pedestrian-${id}`}
+        coordinate={toGoogleLatLng(mapCoordinates)}
         anchor={{ x: 0.5, y: 0.5 }}
       >
         <View style={[
@@ -38,7 +39,7 @@ export const PedestrianMarker: React.FC<PedestrianMarkerProps> = ({
         ]}>
           <View style={styles.markerInner} />
         </View>
-      </MapboxGL.PointAnnotation>
+      </Marker>
     );
   } catch (error) {
     return null;

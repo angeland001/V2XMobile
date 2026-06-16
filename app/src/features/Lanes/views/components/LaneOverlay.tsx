@@ -1,10 +1,11 @@
 // app/src/features/Lanes/views/components/LaneOverlay.tsx
 
 import React from 'react';
-import MapboxGL from '@rnmapbox/maps';
+import { Polyline } from 'react-native-maps';
 import { observer } from 'mobx-react-lite';
 import { LanesViewModel } from '../../viewmodels/LanesViewModel';
 import { LaneRenderingService } from '../../services/LaneRenderingService';
+import { toGooglePath } from '../../../../core/maps/coordinates';
 
 interface LaneOverlayProps {
   lanesViewModel: LanesViewModel;
@@ -18,23 +19,22 @@ export const LaneOverlay: React.FC<LaneOverlayProps> = observer(({ lanesViewMode
 
   const visibleLanes = lanesViewModel.visibleLanes;
 
+  const lineStyle = LaneRenderingService.createLineStyle();
+
   return (
     <>
       {visibleLanes.map((lane) => {
         const feature = LaneRenderingService.createLaneFeature(lane);
-        const lineStyle = LaneRenderingService.createLineLayerStyle();
+        const coordinates = toGooglePath(feature.geometry.coordinates);
+        if (coordinates.length < 2) return null;
 
         return (
-          <MapboxGL.ShapeSource
+          <Polyline
             key={lane.id}
-            id={`${lane.id}-source`}
-            shape={feature}
-          >
-            <MapboxGL.LineLayer
-              id={`${lane.id}-layer`}
-              style={lineStyle}
-            />
-          </MapboxGL.ShapeSource>
+            coordinates={coordinates}
+            strokeColor={lineStyle.lineColor}
+            strokeWidth={lineStyle.lineWidth}
+          />
         );
       })}
     </>

@@ -2,8 +2,9 @@
 
 import React, { useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
-import MapboxGL from '@rnmapbox/maps';
+import { Marker } from 'react-native-maps';
 import { HeadingService, HeadingData } from '../services/HeadingService';
+import { toGoogleLatLng } from '../../../core/maps/coordinates';
 
 interface HeadingMarkerProps {
   coordinate: [number, number]; // [longitude, latitude]
@@ -21,9 +22,9 @@ export const HeadingMarker: React.FC<HeadingMarkerProps> = ({ coordinate }) => {
   }, []);
 
   return (
-    <MapboxGL.MarkerView
-      id="user-location-marker"
-      coordinate={coordinate}
+    <Marker
+      identifier="user-location-marker"
+      coordinate={toGoogleLatLng(coordinate)}
       anchor={{ x: 0.5, y: 0.5 }}
     >
       <View style={styles.container}>
@@ -44,7 +45,7 @@ export const HeadingMarker: React.FC<HeadingMarkerProps> = ({ coordinate }) => {
           <View style={styles.arrowGlow} />
         </View>
       </View>
-    </MapboxGL.MarkerView>
+    </Marker>
   );
 };
 
