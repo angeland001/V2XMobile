@@ -31,3 +31,5 @@ export const COLORS = {
 } as const;
 
 export const TAB_BAR_HEIGHT = 68;
+
+export default COLORS;

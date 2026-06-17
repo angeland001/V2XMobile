@@ -213,3 +213,5 @@ export class DirectionGuideViewModel {
     }
   }
 }
+
+export default DirectionGuideViewModel;

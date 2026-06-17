@@ -791,3 +791,5 @@ export function getLaneConfigForIntersection(intersection: 'georgia' | 'houston'
       return ALL_INTERSECTIONS_LANE_CONFIG;
   }
 }
+
+export default LANE_CONFIG;

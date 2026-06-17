@@ -55,3 +55,5 @@ export const toGoogleLatLngFlexible = (coordinate: [number, number]): GoogleLatL
 
 export const toGooglePathFlexible = (coordinates: [number, number][] = []): GoogleLatLng[] =>
   coordinates.map(toGoogleLatLngFlexible);
+
+export default toGoogleLatLng;

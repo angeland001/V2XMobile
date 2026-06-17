@@ -105,3 +105,5 @@ export class MapViewModel {
     this.stopHeadingTracking();
   }
 }
+
+export default MapViewModel;

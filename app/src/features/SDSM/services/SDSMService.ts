@@ -75,3 +75,5 @@ export class SDSMDataService {
            oldVRU.heading !== newVRU.heading;
   }
 }
+
+export default SDSMDataService;

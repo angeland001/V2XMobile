@@ -50,3 +50,5 @@ export class PreemptionConfigService {
     }
   }
 }
+
+export default PreemptionConfigService;

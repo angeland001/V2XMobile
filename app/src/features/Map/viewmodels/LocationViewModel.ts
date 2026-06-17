@@ -64,3 +64,5 @@ export class LocationViewModel extends BaseViewModel {
     return [this.userLocation.longitude, this.userLocation.latitude];
   }
 }
+
+export default LocationViewModel;

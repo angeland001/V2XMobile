@@ -34,3 +34,5 @@ export interface SDSMObject {
   speed?: number;
   size?: { width: number | null; length: number | null };
 }
+
+export default {};

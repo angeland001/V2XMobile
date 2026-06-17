@@ -207,3 +207,5 @@ export class LaneDetectionService {
     return Math.sqrt((px - closestX) * (px - closestX) + (py - closestY) * (py - closestY));
   }
 }
+
+export default LaneDetectionService;

@@ -101,5 +101,7 @@ export const CROSSWALK_CENTERS: [number, number][] = [
   ...HOUSTON_CROSSWALK_CENTERS
 ];
 
+export default CROSSWALK_POLYGONS;
+
 
 

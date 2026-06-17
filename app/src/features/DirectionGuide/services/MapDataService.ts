@@ -97,3 +97,5 @@ export class MapDataService {
     };
   }
 }
+
+export default MapDataService;

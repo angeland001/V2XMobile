@@ -1,12 +1,14 @@
 // app/src/features/Map/views/components/MapView.tsx
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import RNMapView, {
+  Marker,
   Polygon,
   PROVIDER_GOOGLE,
   type MapType,
 } from "react-native-maps";
+import { Ionicons } from '@expo/vector-icons';
 import { observer } from "mobx-react-lite";
 import * as Location from "expo-location";
 import { MapViewModel } from "../../viewmodels/MapViewModel";
@@ -28,11 +30,9 @@ import { MainViewModel } from "../../../../Main/viewmodels/MainViewModel";
 
 import { MapLegend } from "./MapLegend";
 import { MapOverlayMenu } from "./MapOverlayMenu";
-import { SearchBar } from "./SearchBar";
 import { ZoomControls } from "./mapoverlay/ZoomControls";
 import { TrafficLightPanel } from "../../../preemption/components/TrafficLightPanel";
 import { PreemptionViewModel } from "../../../preemption/viewModels/PreemptionViewModel";
-import { PreemptionToggle } from "../../../preemption/components/PreemptionToggle";
 import { SpatZone, SpatZoneService } from "../../../SpatService/services/SpatZoneService";
 import { SignalState } from "../../../SpatService/models/SpatModels";
 import { toGooglePath, toGooglePathFlexible } from "../../../../core/maps/coordinates";
@@ -42,10 +42,15 @@ import { toGooglePath, toGooglePathFlexible } from "../../../../core/maps/coordi
 // ---------------------------------------------------------------------------
 
 const TIM_CATEGORY_STYLES = {
-  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444' },
-  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B' },
-  informational: { fill: 'rgba(59, 130, 246, 0.25)', stroke: '#3B82F6' },
+  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444', icon: 'warning' as const,           iconColor: '#EF4444' },
+  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B', icon: 'ban' as const,               iconColor: '#F59E0B' },
+  informational: { fill: 'rgba(59, 130, 246, 0.25)', stroke: '#3B82F6', icon: 'information-circle' as const, iconColor: '#3B82F6' },
 } as const;
+
+const polygonCentroid = (coords: { latitude: number; longitude: number }[]) => ({
+  latitude:  coords.reduce((s, c) => s + c.latitude,  0) / coords.length,
+  longitude: coords.reduce((s, c) => s + c.longitude, 0) / coords.length,
+});
 
 const DARK_GOOGLE_MAP_STYLE = [
   { elementType: "geometry", stylers: [{ color: "#1f2937" }] },
@@ -76,15 +81,23 @@ const TIMLayer: React.FC<TIMLayerProps> = observer(({ mainViewModel }) => {
           .filter((ring) => ring.length >= 3);
         if (coordinates.length < 3) return null;
 
+        const centroid = polygonCentroid(coordinates);
+
         return (
-          <Polygon
-            key={`tim-${tim.id}`}
-            coordinates={coordinates}
-            holes={holes}
-            fillColor={style.fill}
-            strokeColor={style.stroke}
-            strokeWidth={2.5}
-          />
+          <React.Fragment key={`tim-${tim.id}`}>
+            <Polygon
+              coordinates={coordinates}
+              holes={holes}
+              fillColor={style.fill}
+              strokeColor={style.stroke}
+              strokeWidth={2.5}
+            />
+            <Marker coordinate={centroid} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
+              <View style={{ backgroundColor: 'white', borderRadius: 20, padding: 4, borderWidth: 1.5, borderColor: style.stroke }}>
+                <Ionicons name={style.icon} size={20} color={style.iconColor} />
+              </View>
+            </Marker>
+          </React.Fragment>
         );
       })}
     </>
@@ -221,7 +234,7 @@ const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpa
           lineWidth = 1.5;
         }
 
-        const coordinates = toGooglePath(zone.polygon);
+        const coordinates = toGooglePathFlexible(zone.polygon);
         if (coordinates.length < 3) return null;
 
         return (
@@ -281,12 +294,29 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       mapViewModel.userLocation.latitude,
       mapViewModel.userLocation.longitude,
     ]);
+    const userPositionRef = useRef<[number, number]>([
+      mapViewModel.userLocation.latitude,
+      mapViewModel.userLocation.longitude,
+    ]);
     const [spatZones, setSpatZones] = useState<SpatZone[]>(() => SpatZoneService.getActiveZones());
     const [activeSpatZoneId, setActiveSpatZoneId] = useState<string | null>(null);
 
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [userHeading, setUserHeading] = useState(0);
     const zoomLevelRef = useRef(17);
+
+    const [toastMsg, setToastMsg] = useState<string | null>(null);
+    const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    const showToast = useCallback((msg: string) => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      setToastMsg(msg);
+      toastTimeoutRef.current = setTimeout(() => setToastMsg(null), 2000);
+    }, []);
+
+    useEffect(() => () => {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    }, []);
 
     const handleZoomIn = () => {
       zoomLevelRef.current = Math.min(zoomLevelRef.current + 1, 22);
@@ -328,7 +358,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     };
 
     const lastCameraUpdate = useRef<number>(0);
-    const CAMERA_UPDATE_THROTTLE = 2000;
+    const hasInitialFix = useRef(false);
+    const CAMERA_UPDATE_THROTTLE = 100;
 
     const activeDetector = isTestingMode
       ? testingPedestrianDetectorViewModel
@@ -349,21 +380,27 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
     const updateCameraPosition = (position: [number, number]) => {
       const now = Date.now();
+      const isFirstFix = !hasInitialFix.current;
 
-      if (now - lastCameraUpdate.current < CAMERA_UPDATE_THROTTLE) {
+      if (!isFirstFix && now - lastCameraUpdate.current < CAMERA_UPDATE_THROTTLE) {
         return;
       }
 
       lastCameraUpdate.current = now;
 
       if (mapRef.current && position[0] !== 0 && position[1] !== 0) {
-        mapRef.current.animateCamera(
-          {
-            center: { latitude: position[0], longitude: position[1] },
-            zoom: 17,
-          },
-          { duration: 1500 },
-        );
+        if (isFirstFix) {
+          hasInitialFix.current = true;
+          mapRef.current.animateCamera(
+            { center: { latitude: position[0], longitude: position[1] }, zoom: 17 },
+            { duration: 0 },
+          );
+        } else {
+          mapRef.current.animateCamera(
+            { center: { latitude: position[0], longitude: position[1] }, zoom: 17 },
+            { duration: 900 },
+          );
+        }
       }
     };
 
@@ -376,13 +413,16 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
       const newPosition: [number, number] = [latitude, longitude];
 
-      setUserPosition((currentPosition) => {
-        if (!arePositionsEqual(currentPosition, newPosition)) {
-          updateAllViewModels(newPosition);
-          updateCameraPosition(newPosition);
-        }
-        return newPosition;
-      });
+      // Compare and update outside setState to avoid mutating MobX observables
+      // inside a React state updater (triggers both a MobX strict-mode violation
+      // and the "Cannot update while rendering" React warning).
+      if (!arePositionsEqual(userPositionRef.current, newPosition)) {
+        userPositionRef.current = newPosition;
+        updateAllViewModels(newPosition);
+        updateCameraPosition(newPosition);
+      }
+
+      setUserPosition(newPosition);
 
       if (heading != null && heading >= 0) {
         setUserHeading(heading);
@@ -394,6 +434,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       handlePositionUpdate(latitude, longitude, heading);
     };
 
+    // Fallback for Android emulator: watchPositionAsync doesn't always fire for
+    // manual Extended Controls location changes, but the Maps SDK callback does.
     const handleMapUserLocationChange = (event: {
       nativeEvent: {
         coordinate?: {
@@ -453,7 +495,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     // Location tracking
     useEffect(() => {
       let locationSubscription: Location.LocationSubscription;
-      let emulatorPollInterval: NodeJS.Timeout | null = null;
 
       const setupLocationTracking = async () => {
         try {
@@ -480,21 +521,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             {
               accuracy: Location.Accuracy.BestForNavigation,
               distanceInterval: 0,
-              timeInterval: 500,
+              timeInterval: 100,
             },
             handleLocationUpdate,
           );
-
-          emulatorPollInterval = setInterval(async () => {
-            try {
-              const location = await Location.getCurrentPositionAsync({
-                accuracy: Location.Accuracy.BestForNavigation,
-              });
-              handleLocationUpdate(location);
-            } catch {
-              // Keep the watch subscription as the primary path.
-            }
-          }, 1000);
 
           if (activeDetector && "startMonitoring" in activeDetector) {
             activeDetector.startMonitoring();
@@ -509,9 +539,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       return () => {
         if (locationSubscription) {
           locationSubscription.remove();
-        }
-        if (emulatorPollInterval) {
-          clearInterval(emulatorPollInterval);
         }
         mapViewModel.stopHeadingTracking();
         if (activeDetector && "stopMonitoring" in activeDetector) {
@@ -553,7 +580,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     return (
       <View style={styles.container}>
         <MapLegend />
-        <SearchBar isDarkMode={isDarkMode} />
         <ZoomControls
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
@@ -561,7 +587,15 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         />
 
         <View style={styles.trafficLightAnchor}>
-          <TrafficLightPanel />
+          <TrafficLightPanel
+            autoEnabled={preemptionViewModel.isEnabled}
+            onToggleAuto={(enabled) => {
+              preemptionViewModel.toggleEnabled(enabled);
+              showToast(enabled ? 'Auto preemption armed' : 'Auto preemption disabled');
+            }}
+            insideZone={preemptionViewModel.insideZone}
+            sessionActive={preemptionViewModel.sessionId !== null}
+          />
         </View>
         <MapOverlayMenu
           isDarkMode={isDarkMode}
@@ -570,12 +604,11 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           onCycleLayer={cycleMapLayer}
         />
 
-        <PreemptionToggle
-          enabled={preemptionViewModel.isEnabled}
-          onToggle={(enabled) => {
-            preemptionViewModel.toggleEnabled(enabled);
-          }}
-        />
+        {toastMsg !== null && (
+          <View style={styles.toast} pointerEvents="none">
+            <Text style={styles.toastText}>{toastMsg}</Text>
+          </View>
+        )}
 
         <RNMapView
           ref={mapRef}
@@ -695,6 +728,21 @@ const styles = StyleSheet.create({
   userLocationDotInSpat: {
     backgroundColor: '#F97316',
   },
+  toast: {
+    position: 'absolute',
+    bottom: 180,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 999,
+    zIndex: 2000,
+  },
+  toastText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   warningContainer: {
     position: "absolute",
     top: 50,
@@ -718,3 +766,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
   },
 });
+
+export default MapViewComponent;

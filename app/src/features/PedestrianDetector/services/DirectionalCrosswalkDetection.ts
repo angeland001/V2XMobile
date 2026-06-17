@@ -134,3 +134,5 @@ export class DirectionalCrosswalkDetection {
     return approachedCrosswalks;
   }
 }
+
+export default DirectionalCrosswalkDetection;

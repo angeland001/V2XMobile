@@ -125,3 +125,5 @@ export class PedestrianWarningService {
     }
   }
 }
+
+export default PedestrianWarningService;

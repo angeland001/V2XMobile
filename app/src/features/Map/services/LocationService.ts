@@ -79,3 +79,5 @@ export class LocationService {
     };
   }
 }
+
+export default LocationService;

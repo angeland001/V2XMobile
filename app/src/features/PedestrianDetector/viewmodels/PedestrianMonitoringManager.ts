@@ -167,6 +167,7 @@ export class PedestrianMonitoringManager {
     this.stopMonitoring();
     this.dataManager.cleanup();
     this.onDataUpdateCallback = null;
-    
   }
 }
+
+export default PedestrianMonitoringManager;

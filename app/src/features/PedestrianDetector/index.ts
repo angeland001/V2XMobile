@@ -33,3 +33,6 @@ export type { PedestrianAlert } from './services/PedestrianWarningService';
 // ========================================
 export { CROSSWALK_POLYGON_COORDS } from '../Crosswalk/constants/CrosswalkCoordinates';
 
+import { PedestrianDetectorViewModel } from './viewmodels/PedestrianDetectorViewModel';
+export default PedestrianDetectorViewModel;
+

@@ -23,3 +23,5 @@ const styles = StyleSheet.create({
     color: '#333',
   }
 });
+
+export default LoadingScreen;

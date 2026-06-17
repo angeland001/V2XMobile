@@ -36,3 +36,5 @@ export const INTERSECTION_POLYGONS: IntersectionPolygon[] = [
     spatApiUrl: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/mlk_spat_events/MLK_Houston'
   }
 ];
+
+export default INTERSECTION_POLYGONS;

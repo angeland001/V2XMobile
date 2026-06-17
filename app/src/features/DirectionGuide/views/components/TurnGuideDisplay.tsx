@@ -292,3 +292,5 @@ const styles = StyleSheet.create({
     shadowColor: '#f59e0b',
   },
 });
+
+export default TurnGuideDisplay;

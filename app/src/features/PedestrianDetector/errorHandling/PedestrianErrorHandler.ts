@@ -69,9 +69,11 @@ export class PedestrianErrorHandler {
    * Check if error is network related
    */
   public static isNetworkError(error: unknown): boolean {
-    return error instanceof Error && 
-           (error.message.includes('fetch') || 
+    return error instanceof Error &&
+           (error.message.includes('fetch') ||
             error.message.includes('network') ||
             error.message.includes('connection'));
   }
 }
+
+export default PedestrianErrorHandler;

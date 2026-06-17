@@ -166,11 +166,11 @@ export class CrosswalkDetectionService {
     if (crosswalkIndex >= CROSSWALK_POLYGONS.length) {
       return null;
     }
-    
+
     const polygon = CROSSWALK_POLYGONS[crosswalkIndex];
     const lats = polygon.map(([, lat]) => lat);
     const lngs = polygon.map(([lng]) => lng);
-    
+
     return {
       minLat: Math.min(...lats),
       maxLat: Math.max(...lats),
@@ -179,3 +179,5 @@ export class CrosswalkDetectionService {
     };
   }
 }
+
+export default CrosswalkDetectionService;

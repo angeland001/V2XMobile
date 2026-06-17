@@ -92,3 +92,5 @@ const styles = StyleSheet.create({
     textShadowRadius: 2,
   },
 });
+
+export default TestVehicles;

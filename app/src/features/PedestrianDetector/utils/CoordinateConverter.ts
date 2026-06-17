@@ -66,6 +66,8 @@ export const OFFSET_COORDINATES: [number, number][] = [
 
 // Convert to real-world coordinates
 export const REAL_WORLD_COORDINATES = CoordinateConverter.offsetToRealWorld(
-  OFFSET_COORDINATES, 
+  OFFSET_COORDINATES,
   MLK_REF_POINT
 );
+
+export default CoordinateConverter;

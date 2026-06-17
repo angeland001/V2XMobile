@@ -24,3 +24,5 @@ export const AppNavigator: React.FC = () => {
     </View>
   );
 };
+
+export default AppNavigator;

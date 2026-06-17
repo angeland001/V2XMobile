@@ -102,3 +102,5 @@ export class PositionChangeHandler {
     // This handler doesn't own any resources directly
   }
 }
+
+export default PositionChangeHandler;

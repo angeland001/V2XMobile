@@ -24,3 +24,6 @@ export const checkTestingUIAvailable = (): boolean => {
     return false;
   }
 };
+
+import { TestingModeOverlay } from './views/components/TestingModeOverlay';
+export default TestingModeOverlay;

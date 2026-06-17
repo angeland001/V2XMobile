@@ -223,3 +223,5 @@ export class VehiclePositionViewModel {
     this.reset();
   }
 }
+
+export default VehiclePositionViewModel;

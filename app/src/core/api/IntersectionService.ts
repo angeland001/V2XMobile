@@ -49,3 +49,5 @@ export class IntersectionService {
     this.intersectionsCache = null;
   }
 }
+
+export default IntersectionService;

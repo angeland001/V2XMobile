@@ -70,10 +70,12 @@ export class IntersectionApiService {
       this.fetchSDSMData(sdsmUrl),
       this.fetchSPaTData(spatUrl)
     ]);
-    
+
     return {
       sdsm: sdsmResult,
       spat: spatResult
     };
   }
 }
+
+export default IntersectionApiService;

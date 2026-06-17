@@ -78,3 +78,5 @@ export interface LaneConfiguration {
   defaultStyle: LaneStyle;
   visible: boolean;
 }
+
+export default {};

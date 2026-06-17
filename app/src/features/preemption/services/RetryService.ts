@@ -148,3 +148,5 @@ export class RetryService {
     throw lastError || new Error('Unknown error');
   }
 }
+
+export default RetryService;

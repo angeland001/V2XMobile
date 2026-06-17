@@ -108,3 +108,5 @@ export class PedestrianDataManager {
     this.clearData();
   }
 }
+
+export default PedestrianDataManager;

@@ -31,3 +31,5 @@ export class PreemptionApiService {
     };
   }
 }
+
+export default PreemptionApiService;

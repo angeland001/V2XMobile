@@ -33,3 +33,5 @@ export const TESTING_CONFIG = {
     SHOW_LINDSAY_LANES: true,    // Toggle Lindsay intersection lanes
   }
 } as const;
+
+export default TESTING_CONFIG;

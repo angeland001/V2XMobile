@@ -26,3 +26,5 @@ export enum ApproachDirection {
     type: TurnType;
     allowed: boolean;
   }
+
+export default {};

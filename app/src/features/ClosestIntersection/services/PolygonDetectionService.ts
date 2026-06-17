@@ -86,7 +86,7 @@ export class PolygonDetectionService {
     // Polygon is in [lng, lat] format
     const lats = polygon.map(([lng, lat]) => lat);
     const lngs = polygon.map(([lng, lat]) => lng);
-    
+
     return {
       minLat: Math.min(...lats),
       maxLat: Math.max(...lats),
@@ -95,3 +95,5 @@ export class PolygonDetectionService {
     };
   }
 }
+
+export default PolygonDetectionService;

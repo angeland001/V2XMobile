@@ -165,3 +165,5 @@ export class ProximityDetectionService {
     const distance = this.getDistanceInMeters(vehiclePosition, pedestrianPosition);
   }
 }
+
+export default ProximityDetectionService;

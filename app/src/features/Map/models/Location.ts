@@ -8,3 +8,5 @@ export interface Coordinate {
 export const toGeoJSONCoordinate = (coord: Coordinate): [number, number] => {
   return [coord.longitude, coord.latitude];
 };
+
+export default {};

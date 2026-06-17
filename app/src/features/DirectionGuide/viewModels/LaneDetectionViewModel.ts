@@ -208,3 +208,5 @@ export class LaneDetectionViewModel {
     return a.length === b.length && a.every((val, i) => val === b[i]);
   }
 }
+
+export default LaneDetectionViewModel;

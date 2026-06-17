@@ -54,8 +54,8 @@ export class VehicleDisplayViewModel {
   
   // Configuration - Georgia only
   private API_URL = 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Georgia';
-  private readonly POLL_DELAY_MS = 100; // 1000ms = 1Hz
-  private readonly FETCH_TIMEOUT_MS = 3000;
+  private readonly POLL_DELAY_MS = 1000; // 1Hz
+  private readonly FETCH_TIMEOUT_MS = 8000;
   
   // Stability settings
   private readonly MIN_HISTORY_COUNT = 2;
@@ -80,6 +80,7 @@ export class VehicleDisplayViewModel {
   // State tracking
   private lastMessageHash: string | null = null;
   private isPolling: boolean = false;
+  private activeController: AbortController | null = null;
   
   constructor() {
     makeAutoObservable(this);
@@ -106,6 +107,7 @@ export class VehicleDisplayViewModel {
    * Start the polling loop
    */
   start(): void {
+    console.log('[SDSM] start() called, ENABLE_SDSM_API=', TESTING_CONFIG.ENABLE_SDSM_API, 'isActive=', this.isActive);
     if (!TESTING_CONFIG.ENABLE_SDSM_API) {
       runInAction(() => {
         this.vehicles = [];
@@ -148,6 +150,7 @@ export class VehicleDisplayViewModel {
 
           this.totalMessages++;
           const messageHash = this.createHash(data);
+          console.log('[SDSM] fetch OK - objects:', data.objects?.length ?? 0, 'hash match:', messageHash === this.lastMessageHash);
 
           if (messageHash !== this.lastMessageHash) {
             // Process new message with history tracking
@@ -155,12 +158,15 @@ export class VehicleDisplayViewModel {
             this.lastMessageHash = messageHash;
             this.newMessages++;
           } else {
+            // Same data, but keep objects alive so they don't go stale
+            this.refreshLastApiUpdateTime(data);
             this.duplicateMessages++;
           }
         } else {
           // Failed fetch - increment failure count
           this.consecutiveFailures++;
-          if (this.consecutiveFailures === 1 || this.consecutiveFailures % 10 === 0) {
+          console.warn(`[SDSM] fetch returned null (failure #${this.consecutiveFailures})`);
+          if (!__DEV__ && (this.consecutiveFailures === 1 || this.consecutiveFailures % 10 === 0)) {
             console.warn(`[SDSM] Fetch failed (${this.consecutiveFailures} consecutive failures)`);
           }
           if (this.consecutiveFailures >= this.MAX_CONSECUTIVE_FAILURES) {
@@ -194,6 +200,23 @@ export class VehicleDisplayViewModel {
     this.isPolling = false;
   }
   
+  /**
+   * On a duplicate response, refresh the API timestamp for objects still present
+   * so they don't go stale while the intersection is just quiet (no position changes).
+   */
+  private refreshLastApiUpdateTime(data: any): void {
+    const now = Date.now();
+    const presentIds = new Set<number>(
+      (data.objects ?? []).map((obj: any) => obj.objectID as number)
+    );
+    for (const [id, vehicle] of this.vehicleHistory) {
+      if (presentIds.has(id)) vehicle.lastApiUpdateTime = now;
+    }
+    for (const [id, vru] of this.vruHistory) {
+      if (presentIds.has(id)) vru.lastApiUpdateTime = now;
+    }
+  }
+
   /**
    * Update vehicles and VRUs with history tracking
    */
@@ -383,6 +406,9 @@ export class VehicleDisplayViewModel {
         speed: v.speed
       }));
     
+    if (displayableVehicles.length > 0 || displayableVRUs.length > 0) {
+      console.log('[SDSM] displaying', displayableVehicles.length, 'vehicles,', displayableVRUs.length, 'VRUs (history size:', this.vehicleHistory.size, ')');
+    }
     runInAction(() => {
       this.vehicles = displayableVehicles;
       this.vrus = displayableVRUs;
@@ -436,7 +462,15 @@ export class VehicleDisplayViewModel {
    */
   private async fetchFromRSU(): Promise<any> {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT_MS);
+    this.activeController = controller;
+    let didTimeout = false;
+    const timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, this.FETCH_TIMEOUT_MS);
+
+    const t0 = Date.now();
+    console.log('[SDSM] fetching:', this.API_URL);
 
     try {
       const response = await fetch(this.API_URL, {
@@ -450,6 +484,7 @@ export class VehicleDisplayViewModel {
       });
 
       clearTimeout(timeoutId);
+      this.activeController = null;
 
       if (!response.ok) {
         console.warn(`[SDSM] HTTP ${response.status} from API`);
@@ -459,13 +494,21 @@ export class VehicleDisplayViewModel {
       return await response.json();
 
     } catch (error) {
+      const elapsed = Date.now() - t0;
       clearTimeout(timeoutId);
+      this.activeController = null;
 
       if (error instanceof Error && error.name === 'AbortError') {
-        console.warn('[SDSM] Request timed out');
+        if (!this.isPolling) return null;
+        if (didTimeout) {
+          console.warn(`[SDSM] Request TIMED OUT after ${elapsed}ms (limit: ${this.FETCH_TIMEOUT_MS}ms) - device may not have VPN/network access to the server`);
+        } else {
+          console.warn(`[SDSM] Request aborted by stop() after ${elapsed}ms`);
+        }
         return null;
       }
 
+      console.warn(`[SDSM] Fetch error after ${elapsed}ms:`, (error as Error).message);
       throw error;
     }
   }
@@ -492,7 +535,9 @@ export class VehicleDisplayViewModel {
    */
   stop(): void {
     this.isPolling = false;
-    
+    this.activeController?.abort();
+    this.activeController = null;
+
     runInAction(() => {
       this.isActive = false;
       this.vehicles = [];
@@ -603,3 +648,5 @@ export class VehicleDisplayViewModel {
     this.vruHistory.clear();
   }
 }
+
+export default VehicleDisplayViewModel;

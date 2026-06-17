@@ -9,7 +9,7 @@ export const formatDistance = (distance: number): string => {
   export const formatDuration = (seconds: number): string => {
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
-    
+
     if (hours > 0) {
       const remainingMinutes = minutes % 60;
       return `${hours} hr ${remainingMinutes} min`;
@@ -17,3 +17,5 @@ export const formatDistance = (distance: number): string => {
       return `${minutes} min`;
     }
   };
+
+export default formatDistance;

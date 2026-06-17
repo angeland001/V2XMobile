@@ -5,3 +5,5 @@ export interface PedestrianAlert {
     pedestrianCount: number;
     isVehicleApproaching: boolean;
   }
+
+export default {};

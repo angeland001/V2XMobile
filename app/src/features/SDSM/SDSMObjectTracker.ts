@@ -294,3 +294,5 @@ export const recordOverlayEvent = (objectId: number): void => tracker.recordOver
 export const isTracking = (): boolean => tracker.isCurrentlyTracking();
 export const hasTrackingCompleted = (): boolean => tracker.hasAlreadyRun();
 export const getAppearanceCount = (): number => tracker.getAppearanceCount();
+
+export default startSDSMTracking;

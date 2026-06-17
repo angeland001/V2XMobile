@@ -263,3 +263,5 @@ export class SpatViewModel {
     });
   }
 }
+
+export default SpatViewModel;
