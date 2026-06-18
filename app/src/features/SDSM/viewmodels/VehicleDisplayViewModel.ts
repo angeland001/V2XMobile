@@ -54,7 +54,7 @@ export class VehicleDisplayViewModel {
   
   // Configuration - Georgia only
   private API_URL = 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Georgia';
-  private readonly POLL_DELAY_MS = 1000; // 1Hz
+  private readonly POLL_DELAY_MS = 500; // 2Hz
   private readonly FETCH_TIMEOUT_MS = 8000;
   
   // Stability settings
@@ -150,7 +150,6 @@ export class VehicleDisplayViewModel {
 
           this.totalMessages++;
           const messageHash = this.createHash(data);
-          console.log('[SDSM] fetch OK - objects:', data.objects?.length ?? 0, 'hash match:', messageHash === this.lastMessageHash);
 
           if (messageHash !== this.lastMessageHash) {
             // Process new message with history tracking
@@ -406,9 +405,6 @@ export class VehicleDisplayViewModel {
         speed: v.speed
       }));
     
-    if (displayableVehicles.length > 0 || displayableVRUs.length > 0) {
-      console.log('[SDSM] displaying', displayableVehicles.length, 'vehicles,', displayableVRUs.length, 'VRUs (history size:', this.vehicleHistory.size, ')');
-    }
     runInAction(() => {
       this.vehicles = displayableVehicles;
       this.vrus = displayableVRUs;
@@ -470,7 +466,6 @@ export class VehicleDisplayViewModel {
     }, this.FETCH_TIMEOUT_MS);
 
     const t0 = Date.now();
-    console.log('[SDSM] fetching:', this.API_URL);
 
     try {
       const response = await fetch(this.API_URL, {

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Animated } from 'react-native';
 
 export type TrafficLightState = 'red' | 'yellow' | 'green' | null;
 
@@ -8,9 +8,6 @@ interface TrafficLightPanelProps {
   intersectionName?: string;
   progress?: number; // 0–1
   durationLabel?: string;
-  autoEnabled?: boolean;
-  onToggleAuto?: (enabled: boolean) => void;
-  insideZone?: boolean;
   sessionActive?: boolean;
 }
 
@@ -41,17 +38,13 @@ const LIGHTS: {
 ];
 
 export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
-  activeLight = 'red',
-  intersectionName = 'Intersection 12 · US-27',
-  progress = 0.45,
-  durationLabel = '18s / 40s',
-  autoEnabled = false,
-  onToggleAuto,
-  insideZone = false,
+  activeLight = null,
+  intersectionName,
+  progress = 0,
+  durationLabel = '--',
   sessionActive = false,
 }) => {
   const progressAnim = useRef(new Animated.Value(progress)).current;
-  const dotPulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -61,159 +54,77 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
     }).start();
   }, [progress]);
 
-  // Pulse the dot when armed and inside a zone
-  useEffect(() => {
-    if (autoEnabled && insideZone) {
-      const pulse = Animated.loop(
-        Animated.sequence([
-          Animated.timing(dotPulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
-          Animated.timing(dotPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
-        ]),
-      );
-      pulse.start();
-      return () => pulse.stop();
-    } else {
-      dotPulse.setValue(1);
-    }
-  }, [autoEnabled, insideZone]);
-
   return (
     <View style={styles.wrapper}>
-      {/* Auto arm/disarm chip — always visible */}
-      <Pressable
-        style={[styles.autoChip, autoEnabled ? styles.autoChipOn : styles.autoChipOff]}
-        onPress={() => onToggleAuto?.(!autoEnabled)}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-      >
-        <Animated.View
-          style={[
-            styles.autoDot,
-            autoEnabled ? styles.autoDotOn : styles.autoDotOff,
-            { opacity: dotPulse },
-          ]}
-        />
-        <Text style={[styles.autoText, autoEnabled ? styles.autoTextOn : styles.autoTextOff]}>
-          Auto
-        </Text>
-      </Pressable>
+      {intersectionName ? (
+        <View style={styles.nameBadge}>
+          <Text style={styles.nameText} numberOfLines={2}>
+            {intersectionName}
+          </Text>
+          {sessionActive && (
+            <Text style={styles.preemptedLabel}>PREEMPTED</Text>
+          )}
+        </View>
+      ) : null}
 
-      {/* Expanded panel — only when inside a SPaT zone */}
-      {insideZone && (
-        <>
-          {/* Intersection name badge */}
-          <View style={styles.nameBadge}>
-            <Text style={styles.nameText} numberOfLines={2}>
-              {intersectionName}
-            </Text>
-            {sessionActive && (
-              <Text style={styles.preemptedLabel}>PREEMPTED</Text>
-            )}
-          </View>
+      <View style={styles.housing}>
+        <View style={styles.bolt} />
 
-          {/* Traffic light housing */}
-          <View style={styles.housing}>
-            {/* Top bolt */}
-            <View style={styles.bolt} />
-
-            {LIGHTS.map(({ key, activeColor, glowColor, dimColor }) => {
-              const isActive = activeLight === key;
-              return (
-                <View
-                  key={key}
-                  style={[styles.lightSocket, isActive && { backgroundColor: glowColor }]}
-                >
-                  <View
-                    style={[
-                      styles.light,
-                      { backgroundColor: isActive ? activeColor : dimColor },
-                      isActive && {
-                        shadowColor: activeColor,
-                        shadowOpacity: 0.95,
-                        shadowRadius: 14,
-                        shadowOffset: { width: 0, height: 0 },
-                        elevation: 14,
-                      },
-                    ]}
-                  />
-                </View>
-              );
-            })}
-
-            {/* Bottom bolt */}
-            <View style={styles.bolt} />
-
-            {/* Progress bar + label */}
-            <View style={styles.progressTrack}>
-              <Animated.View
+        {LIGHTS.map(({ key, activeColor, glowColor, dimColor }) => {
+          const isActive = activeLight === key;
+          return (
+            <View
+              key={key}
+              style={[styles.lightSocket, isActive && { backgroundColor: glowColor }]}
+            >
+              <View
                 style={[
-                  styles.progressFill,
-                  {
-                    width: progressAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0%', '100%'],
-                    }),
+                  styles.light,
+                  { backgroundColor: isActive ? activeColor : dimColor },
+                  isActive && {
+                    shadowColor: activeColor,
+                    shadowOpacity: 0.95,
+                    shadowRadius: 14,
+                    shadowOffset: { width: 0, height: 0 },
+                    elevation: 14,
                   },
                 ]}
               />
             </View>
-            <Text style={styles.durationText}>{durationLabel}</Text>
-          </View>
-        </>
-      )}
+          );
+        })}
+
+        <View style={styles.bolt} />
+
+        <View style={styles.progressTrack}>
+          <Animated.View
+            style={[
+              styles.progressFill,
+              {
+                width: progressAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0%', '100%'],
+                }),
+              },
+            ]}
+          />
+        </View>
+        <Text style={styles.durationText}>{durationLabel}</Text>
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   wrapper: {
+    position: 'absolute',
+    bottom: 100,
+    left: 16,
     alignItems: 'center',
     width: 76,
+    zIndex: 1000,
   },
 
-  // Auto chip
-  autoChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    marginBottom: 6,
-  },
-  autoChipOn: {
-    backgroundColor: 'rgba(16, 185, 129, 0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.5)',
-  },
-  autoChipOff: {
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
-  },
-  autoDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 3.5,
-  },
-  autoDotOn: {
-    backgroundColor: '#10b981',
-  },
-  autoDotOff: {
-    backgroundColor: '#6b7280',
-  },
-  autoText: {
-    fontSize: 11,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-  },
-  autoTextOn: {
-    color: '#10b981',
-  },
-  autoTextOff: {
-    color: 'rgba(255,255,255,0.6)',
-  },
-
-  // Intersection name
   nameBadge: {
     backgroundColor: 'rgba(20, 20, 30, 0.82)',
     borderRadius: 8,
@@ -238,7 +149,6 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
-  // Housing
   housing: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
@@ -275,7 +185,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
 
-  // Progress bar
   progressTrack: {
     width: '100%',
     height: 5,

@@ -22,6 +22,7 @@ import { VehicleMarkers } from "../../../SDSM/views/VehicleMarkers";
 import { VRUMarkers } from "../../../SDSM/views/VRUMarkers";
 import { TestingModeOverlay } from "../../../../testingFeatures/testingUI";
 import { LaneOverlay } from "../../../Lanes/views/components/LaneOverlay";
+import { TrafficLightPanel } from "../../../preemption/components/TrafficLightPanel";
 import { LanesViewModel } from "../../../Lanes/viewmodels/LanesViewModel";
 import { CROSSWALK_POLYGONS } from "../../../Crosswalk/constants/CrosswalkCoordinates";
 import { CrosswalkDetectionService } from "../../../PedestrianDetector/services/CrosswalkDetectionService";
@@ -31,7 +32,7 @@ import { MainViewModel } from "../../../../Main/viewmodels/MainViewModel";
 import { MapLegend } from "./MapLegend";
 import { MapOverlayMenu } from "./MapOverlayMenu";
 import { ZoomControls } from "./mapoverlay/ZoomControls";
-import { TrafficLightPanel } from "../../../preemption/components/TrafficLightPanel";
+import { PreemptionToggle } from "../../../preemption/components/PreemptionToggle";
 import { PreemptionViewModel } from "../../../preemption/viewModels/PreemptionViewModel";
 import { SpatZone, SpatZoneService } from "../../../SpatService/services/SpatZoneService";
 import { SignalState } from "../../../SpatService/models/SpatModels";
@@ -68,11 +69,21 @@ interface TIMLayerProps {
 
 const TIMLayer: React.FC<TIMLayerProps> = observer(({ mainViewModel }) => {
   const tims = mainViewModel?.timService.activeTims;
+  const settings = mainViewModel?.settingsViewModel;
   if (!tims || tims.length === 0) return null;
+
+  const visibleTims = tims.filter((tim) => {
+    if (tim.category === 'safety') return settings?.safetyAlerts ?? true;
+    if (tim.category === 'regulatory') return settings?.regulatoryAlerts ?? true;
+    if (tim.category === 'informational') return settings?.informationalAlerts ?? true;
+    return true;
+  });
+
+  if (visibleTims.length === 0) return null;
 
   return (
     <>
-      {tims.map((tim) => {
+      {visibleTims.map((tim) => {
         const style = TIM_CATEGORY_STYLES[tim.category] ?? TIM_CATEGORY_STYLES.informational;
         const coordinates = toGooglePathFlexible(tim.geometry.coordinates[0] as [number, number][]);
         const holes = tim.geometry.coordinates
@@ -358,8 +369,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     };
 
     const lastCameraUpdate = useRef<number>(0);
+    const lastStateUpdate = useRef<number>(0);
     const hasInitialFix = useRef(false);
-    const CAMERA_UPDATE_THROTTLE = 100;
 
     const activeDetector = isTestingMode
       ? testingPedestrianDetectorViewModel
@@ -379,29 +390,28 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       Math.abs(a[0] - b[0]) < 0.000001 && Math.abs(a[1] - b[1]) < 0.000001;
 
     const updateCameraPosition = (position: [number, number]) => {
-      const now = Date.now();
-      const isFirstFix = !hasInitialFix.current;
+      if (position[0] === 0 && position[1] === 0) return;
 
-      if (!isFirstFix && now - lastCameraUpdate.current < CAMERA_UPDATE_THROTTLE) {
+      if (!hasInitialFix.current) {
+        hasInitialFix.current = true;
+        mapRef.current?.animateCamera(
+          { center: { latitude: position[0], longitude: position[1] }, zoom: 17 },
+          { duration: 0 },
+        );
         return;
       }
 
+      const now = Date.now();
+      if (now - lastCameraUpdate.current < 50) return; // 20 Hz cap
       lastCameraUpdate.current = now;
 
-      if (mapRef.current && position[0] !== 0 && position[1] !== 0) {
-        if (isFirstFix) {
-          hasInitialFix.current = true;
-          mapRef.current.animateCamera(
-            { center: { latitude: position[0], longitude: position[1] }, zoom: 17 },
-            { duration: 0 },
-          );
-        } else {
-          mapRef.current.animateCamera(
-            { center: { latitude: position[0], longitude: position[1] }, zoom: 17 },
-            { duration: 900 },
-          );
-        }
-      }
+      // duration: 0 — instant snap per update. Avoids interrupted-animation stutter
+      // that occurs when duration > update interval. At 20 Hz the steps are small
+      // enough to look fluid at any realistic driving speed.
+      mapRef.current?.animateCamera(
+        { center: { latitude: position[0], longitude: position[1] } },
+        { duration: 0 },
+      );
     };
 
     const handlePositionUpdate = (
@@ -413,16 +423,22 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
       const newPosition: [number, number] = [latitude, longitude];
 
-      // Compare and update outside setState to avoid mutating MobX observables
-      // inside a React state updater (triggers both a MobX strict-mode violation
-      // and the "Cannot update while rendering" React warning).
+      // Camera: full 20 Hz, never triggers a React re-render
+      updateCameraPosition(newPosition);
+
+      // ViewModels: only on meaningful movement
       if (!arePositionsEqual(userPositionRef.current, newPosition)) {
         userPositionRef.current = newPosition;
         updateAllViewModels(newPosition);
-        updateCameraPosition(newPosition);
       }
 
-      setUserPosition(newPosition);
+      // React state (re-render): throttled to 5 Hz so the MapView component
+      // tree doesn't reconcile 20× per second and drop frames during navigation.
+      const now = Date.now();
+      if (now - lastStateUpdate.current >= 200) {
+        lastStateUpdate.current = now;
+        setUserPosition(newPosition);
+      }
 
       if (heading != null && heading >= 0) {
         setUserHeading(heading);
@@ -521,7 +537,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             {
               accuracy: Location.Accuracy.BestForNavigation,
               distanceInterval: 0,
-              timeInterval: 100,
+              timeInterval: 50,
             },
             handleLocationUpdate,
           );
@@ -586,17 +602,12 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           onLocateUser={handleLocateUser}
         />
 
-        <View style={styles.trafficLightAnchor}>
-          <TrafficLightPanel
-            autoEnabled={preemptionViewModel.isEnabled}
-            onToggleAuto={(enabled) => {
-              preemptionViewModel.toggleEnabled(enabled);
-              showToast(enabled ? 'Auto preemption armed' : 'Auto preemption disabled');
-            }}
-            insideZone={preemptionViewModel.insideZone}
-            sessionActive={preemptionViewModel.sessionId !== null}
-          />
-        </View>
+        <PreemptionToggle
+          enabled={preemptionViewModel.isEnabled}
+          onToggle={(enabled) => {
+            preemptionViewModel.toggleEnabled(enabled);
+          }}
+        />
         <MapOverlayMenu
           isDarkMode={isDarkMode}
           onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
@@ -616,6 +627,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           provider={PROVIDER_GOOGLE}
           mapType={GOOGLE_MAP_TYPES[mapLayer]}
           customMapStyle={isDarkMode ? DARK_GOOGLE_MAP_STYLE : []}
+          renderToHardwareTextureAndroid
           initialRegion={{
             latitude: 35.0454,
             longitude: -85.3075,
@@ -646,21 +658,23 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
           <TIMLayer mainViewModel={mainViewModel} />
 
-          <LaneOverlay lanesViewModel={lanesViewModel} />
+          {(mainViewModel?.settingsViewModel?.showLanes ?? true) && (
+            <LaneOverlay lanesViewModel={lanesViewModel} />
+          )}
 
-          {mainViewModel?.vehicleDisplayViewModel &&
+          {(mainViewModel?.settingsViewModel?.showVehicles ?? true) && mainViewModel?.vehicleDisplayViewModel &&
             shouldShowSDSMForViewModel(mainViewModel.vehicleDisplayViewModel) && (
               <VehicleMarkers
                 viewModel={mainViewModel.vehicleDisplayViewModel}
               />
             )}
 
-          {testingVehicleDisplayViewModel &&
+          {(mainViewModel?.settingsViewModel?.showVehicles ?? true) && testingVehicleDisplayViewModel &&
             shouldShowSDSMForViewModel(testingVehicleDisplayViewModel) && (
               <VehicleMarkers viewModel={testingVehicleDisplayViewModel} />
             )}
 
-          {mainViewModel?.vehicleDisplayViewModel &&
+          {(mainViewModel?.settingsViewModel?.showVehicles ?? true) && mainViewModel?.vehicleDisplayViewModel &&
             shouldShowSDSMForViewModel(mainViewModel.vehicleDisplayViewModel) && (
               <VRUMarkers
                 vrus={mainViewModel.vehicleDisplayViewModel.vrus}
@@ -671,7 +685,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
               />
             )}
 
-          {testingVehicleDisplayViewModel &&
+          {(mainViewModel?.settingsViewModel?.showVehicles ?? true) && testingVehicleDisplayViewModel &&
             shouldShowSDSMForViewModel(testingVehicleDisplayViewModel) && (
               <VRUMarkers
                 vrus={testingVehicleDisplayViewModel.vrus}
@@ -702,6 +716,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           testingVehicleDisplayViewModel={testingVehicleDisplayViewModel}
         />
 
+        <TrafficLightPanel />
+
         <TurnGuideDisplay spatViewModel={spatViewModel} />
 
         {/* Pedestrian warning — isolated observer, re-renders only when
@@ -719,13 +735,7 @@ const styles = StyleSheet.create({
   map: {
     flex: 1,
   },
-  trafficLightAnchor: {
-    position: 'absolute',
-    left: 16,
-    bottom: 110,
-    zIndex: 100,
-  },
-  userLocationDotInSpat: {
+userLocationDotInSpat: {
     backgroundColor: '#F97316',
   },
   toast: {

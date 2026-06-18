@@ -7,6 +7,7 @@ import {
   bearing,
   centroid,
   bbox,
+  distance,
 } from '@turf/turf';
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
 import { API_CONFIG } from '../../../core/api/config';
@@ -15,9 +16,11 @@ import { TimMessage, timCategoryFromType } from '../models/TimTypes';
 
 export interface TimToastItem {
   id: string;
-  category: 'safety' | 'regulatory';
+  category: 'safety' | 'regulatory' | 'informational';
   message: string;
   timestamp: number;
+  timId: number;
+  severity: number;
 }
 
 export interface TimAlertLogItem {
@@ -33,6 +36,7 @@ export class TimService {
   toastQueue: TimToastItem[] = [];
   alertLog: TimAlertLogItem[] = [];
   unreadAlertCount: number = 0;
+  timDistances: Map<number, number> = new Map();
 
   private pollInterval: NodeJS.Timeout | null = null;
   private bufferedCache = new Map<number, Feature<Polygon | MultiPolygon>>();
@@ -44,6 +48,7 @@ export class TimService {
       toastQueue: observable,
       alertLog: observable,
       unreadAlertCount: observable,
+      timDistances: observable,
       start: action,
       stop: action,
       checkProximity: action,
@@ -68,6 +73,7 @@ export class TimService {
     runInAction(() => {
       this.activeTims = [];
       this.toastQueue = [];
+      this.timDistances = new Map();
     });
   }
 
@@ -84,8 +90,16 @@ export class TimService {
 
     const userPoint = point([longitude, latitude]);
     const nowInBuffer = new Set<number>();
+    const newDistances = new Map<number, number>();
 
     for (const tim of this.activeTims) {
+      try {
+        const poly = polygon(tim.geometry.coordinates);
+        const c = centroid(poly);
+        const dist = distance(userPoint, c, { units: 'miles' });
+        newDistances.set(tim.id, dist);
+      } catch {}
+
       const bufferedGeom = this.bufferedCache.get(tim.id);
       if (!bufferedGeom) continue;
 
@@ -106,6 +120,7 @@ export class TimService {
     }
 
     this.inBufferIds = nowInBuffer;
+    this.timDistances = newDistances;
   }
 
   private async fetchActiveTims(): Promise<void> {
@@ -168,9 +183,14 @@ export class TimService {
       });
       this.unreadAlertCount += 1;
 
-      if (tim.category === 'safety' || tim.category === 'regulatory') {
-        this.toastQueue.push({ id, category: tim.category as 'safety' | 'regulatory', message, timestamp: Date.now() });
-      }
+      this.toastQueue.push({
+        id,
+        category: tim.category,
+        message,
+        timestamp: Date.now(),
+        timId: tim.id,
+        severity: tim.severity,
+      });
     });
   }
 

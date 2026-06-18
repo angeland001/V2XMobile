@@ -12,6 +12,7 @@ import { LanesViewModel } from '../../features/Lanes';
 import { SpatViewModel } from '../../features/SpatService/viewModels/SpatViewModel';
 import { SpatZoneService } from '../../features/SpatService/services/SpatZoneService';
 import { TimService } from '../../features/TIM/services/TimService';
+import { SettingsViewModel } from '../../features/UI/viewmodels/SettingsViewModel';
 
 export class MainViewModel {
   mapViewModel: MapViewModel;
@@ -22,6 +23,7 @@ export class MainViewModel {
   lanesViewModel: LanesViewModel;
   spatViewModel: SpatViewModel;
   timService: TimService;
+  settingsViewModel: SettingsViewModel;
   private positionSyncInterval: NodeJS.Timeout | null = null;
   
   isTestingMode: boolean = TESTING_CONFIG.USE_TESTING_MODE;
@@ -32,6 +34,7 @@ export class MainViewModel {
     this.lanesViewModel = new LanesViewModel();
     this.spatViewModel = new SpatViewModel();
     this.timService = new TimService();
+    this.settingsViewModel = new SettingsViewModel();
     
     if (TESTING_CONFIG.USE_TESTING_MODE) {
       this.testingPedestrianDetectorViewModel = new TestingPedestrianDetectorViewModel();
