@@ -261,3 +261,5 @@ export class SpatZoneService {
     return inside;
   }
 }
+
+export default SpatZoneService;

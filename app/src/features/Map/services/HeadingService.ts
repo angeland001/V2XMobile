@@ -157,3 +157,5 @@ export class HeadingService {
     };
   }
 }
+
+export default HeadingService;

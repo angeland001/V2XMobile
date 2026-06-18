@@ -11,7 +11,7 @@ import {
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
 import { API_CONFIG } from '../../../core/api/config';
 import { normalizeToLngLat } from '../../../core/maps/coordinates';
-import { TimMessage } from '../models/TimTypes';
+import { TimMessage, timCategoryFromType } from '../models/TimTypes';
 
 export interface TimToastItem {
   id: string;
@@ -110,12 +110,17 @@ export class TimService {
 
   private async fetchActiveTims(): Promise<void> {
     try {
-      const resp = await fetch(`${API_CONFIG.DASHBOARD_API_URL}/api/tim-messages/active`);
+      const resp = await fetch(`${API_CONFIG.DASHBOARD_API_URL}/api/tim-messages`);
       if (!resp.ok) return;
       const data = await resp.json();
       if (!Array.isArray(data)) return;
 
-      const tims = (data as TimMessage[]).map((tim) => this.normalizeTimGeometry(tim));
+      const tims = (data as TimMessage[])
+        .filter((tim) => tim.is_active)
+        .map((tim) => {
+          const category = timCategoryFromType(tim.tim_type);
+          return this.normalizeTimGeometry({ ...tim, category });
+        });
       const newCache = new Map<number, Feature<Polygon | MultiPolygon>>();
 
       for (const tim of tims) {
@@ -206,3 +211,5 @@ export class TimService {
     return d > 180 ? 360 - d : d;
   }
 }
+
+export default TimService;

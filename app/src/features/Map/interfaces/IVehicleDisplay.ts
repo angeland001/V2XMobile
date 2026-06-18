@@ -15,11 +15,13 @@ export interface IVehicleDisplay {
       length: number | null;
     };
   }>;
-  
+
   isActive: boolean;
   vehicleCount: number;
-  
+
   // Methods
   getMapCoordinates(vehicle: any): [number, number];
   cleanup(): void;
 }
+
+export default {};

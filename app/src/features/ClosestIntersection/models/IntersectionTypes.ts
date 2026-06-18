@@ -23,3 +23,5 @@ export interface ClosestIntersectionResult {
   heading?: number;
   timestamp: number;
 }
+
+export default {};

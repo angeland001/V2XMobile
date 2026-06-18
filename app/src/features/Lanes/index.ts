@@ -14,3 +14,5 @@ export * from './viewmodels/LanesViewModel';
 
 // Components
 export * from './views/components/LaneOverlay';
+
+export default {};

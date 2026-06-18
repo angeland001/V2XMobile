@@ -73,7 +73,7 @@ export class DistanceCalculationService {
   ): number {
     const [lat1, lng1] = from;
     const [lng2, lat2] = to;
-    
+
     const φ1 = lat1 * Math.PI / 180;
     const φ2 = lat2 * Math.PI / 180;
     const Δλ = (lng2 - lng1) * Math.PI / 180;
@@ -85,3 +85,5 @@ export class DistanceCalculationService {
     return ((θ * 180 / Math.PI) + 360) % 360; // Normalize to 0-360
   }
 }
+
+export default DistanceCalculationService;

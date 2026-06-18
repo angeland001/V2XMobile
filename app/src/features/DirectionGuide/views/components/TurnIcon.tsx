@@ -130,8 +130,10 @@ export const TurnIcon: React.FC<TurnIconProps> = ({
 };
 
 const styles = StyleSheet.create({
-  container: { 
-    justifyContent: 'center', 
-    alignItems: 'center' 
+  container: {
+    justifyContent: 'center',
+    alignItems: 'center'
   },
 });
+
+export default TurnIcon;

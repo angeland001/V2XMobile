@@ -34,3 +34,5 @@ export const DEFAULT_LANE_DETECTION_CONFIG: LaneDetectionConfig = {
   laneWidthThreshold: 4.0 * 0.000009, // Increased from 3.5m to 4m for earlier detection
   metersToCoordRatio: 0.000009
 };
+
+export default DEFAULT_LANE_DETECTION_CONFIG;

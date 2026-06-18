@@ -57,3 +57,5 @@ const styles = StyleSheet.create({
     borderColor: CIRCLE_STYLE.circleStrokeColor,
   },
 });
+
+export default VehicleMarkers;

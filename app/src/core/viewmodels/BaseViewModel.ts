@@ -12,3 +12,5 @@ export class BaseViewModel {
     this.loading = loading;
   }
 }
+
+export default BaseViewModel;

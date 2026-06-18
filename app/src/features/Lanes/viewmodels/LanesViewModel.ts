@@ -370,3 +370,5 @@ export class LanesViewModel {
     this.error = null;
   }
 }
+
+export default LanesViewModel;

@@ -22,3 +22,5 @@ export const useLocationPermission = (): [boolean, boolean] => {
 
   return [hasPermission, isLoading];
 };
+
+export default useLocationPermission;

@@ -133,3 +133,5 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
 });
+
+export default HeadingDisplay;

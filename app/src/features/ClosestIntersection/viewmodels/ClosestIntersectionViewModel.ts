@@ -247,13 +247,15 @@ export class ClosestIntersectionViewModel {
    */
   cleanup(): void {
     this.stopMonitoring();
-    
+
     if (this.activationRetryTimeout) {
       clearTimeout(this.activationRetryTimeout);
       this.activationRetryTimeout = null;
     }
-    
+
     this.vehicleDisplayVM = null;
     this.spatVM = null;
   }
 }
+
+export default ClosestIntersectionViewModel;

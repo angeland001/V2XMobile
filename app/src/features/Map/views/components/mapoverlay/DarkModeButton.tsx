@@ -46,3 +46,5 @@ const styles = StyleSheet.create({
     backgroundColor: "#1E2A3A",
   },
 });
+
+export default DarkModeButton;

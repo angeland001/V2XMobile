@@ -260,3 +260,5 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+export default AlertsScreen;

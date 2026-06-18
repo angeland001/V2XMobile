@@ -57,15 +57,17 @@ export const createVehicleDisplay = (): VehicleDisplayViewModel => {
  */
 export const testSDSMConnection = async (): Promise<boolean> => {
   // Removed connection test logs to reduce noise
-  
+
   try {
     const isConnected = await SDSMService.testConnection();
-    
+
     // Removed connection result logs to reduce noise
-    
+
     return isConnected;
   } catch (error) {
     // Removed connection error logs to reduce noise
     return false;
   }
 };
+
+export default VehicleDisplayViewModel;

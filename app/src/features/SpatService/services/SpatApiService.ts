@@ -86,3 +86,5 @@ export class SpatApiService {
     this.cache.clear();
   }
 }
+
+export default SpatApiService;

@@ -51,3 +51,5 @@ export interface ProcessedIntersectionData {
   timestamp: string;
   signalGroups?: number[]; // SPaT-related signal groups for this intersection
 }
+
+export default {};

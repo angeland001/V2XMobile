@@ -384,3 +384,5 @@ export class PreemptionViewModel {
     this.configCache.clear();
   }
 }
+
+export default PreemptionViewModel;

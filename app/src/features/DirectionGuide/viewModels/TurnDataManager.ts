@@ -118,3 +118,5 @@ export class TurnDataManager {
     this.clearTurnData();
   }
 }
+
+export default TurnDataManager;

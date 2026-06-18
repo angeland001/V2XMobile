@@ -202,3 +202,5 @@ export class IntersectionApiController {
     this.stopConditionalApiCalling();
   }
 }
+
+export default IntersectionApiController;

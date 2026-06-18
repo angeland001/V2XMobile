@@ -75,3 +75,5 @@ export const testServerConnection = async () => {
     return { success: false, url: '' };
   }
 };
+
+export default testServerConnection;

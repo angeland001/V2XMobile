@@ -217,3 +217,5 @@ export class PedestrianDetectorViewModel {
     });
   }
 }
+
+export default PedestrianDetectorViewModel;

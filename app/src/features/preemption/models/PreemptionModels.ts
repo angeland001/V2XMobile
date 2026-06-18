@@ -36,3 +36,5 @@ export interface SrmPayload {
     }
   ];
 }
+
+export default {};

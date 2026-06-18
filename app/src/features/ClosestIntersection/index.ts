@@ -35,3 +35,5 @@ export const CLOSEST_INTERSECTION_CONFIG = {
 export const createIntersectionMonitor = (): ClosestIntersectionViewModel => {
   return new ClosestIntersectionViewModel();
 };
+
+export default ClosestIntersectionViewModel;

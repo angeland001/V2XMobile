@@ -3,7 +3,6 @@ import { View, StyleSheet } from "react-native";
 import { DarkModeButton } from "./mapoverlay/DarkModeButton";
 import { LayersButton } from "./mapoverlay/LayersButton";
 import { Compass } from "./mapoverlay/Compass";
-import { NavigationDrawer } from "./mapoverlay/NavigationDrawer";
 
 interface MapOverlayMenuProps {
   isDarkMode: boolean;
@@ -24,9 +23,6 @@ export const MapOverlayMenu: React.FC<MapOverlayMenuProps> = ({
       <View style={styles.topLeft}>
         <Compass heading={userHeading} />
       </View>
-
-      {/* Left-side navigation drawer — below compass */}
-      <NavigationDrawer />
 
       {/* Top-right: stacked buttons */}
       <View style={styles.topRight}>
@@ -55,3 +51,5 @@ const styles = StyleSheet.create({
     height: 8,
   },
 });
+
+export default MapOverlayMenu;

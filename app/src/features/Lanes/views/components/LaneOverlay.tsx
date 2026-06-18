@@ -42,3 +42,5 @@ export const LaneOverlay: React.FC<LaneOverlayProps> = observer(({ lanesViewMode
 });
 
 LaneOverlay.displayName = 'LaneOverlay';
+
+export default LaneOverlay;

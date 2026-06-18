@@ -75,3 +75,5 @@ const styles = StyleSheet.create({
     height: 8,
   },
 });
+
+export default ZoomControls;

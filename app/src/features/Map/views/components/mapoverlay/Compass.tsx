@@ -75,3 +75,5 @@ const styles = StyleSheet.create({
     lineHeight: 10,
   },
 });
+
+export default Compass;

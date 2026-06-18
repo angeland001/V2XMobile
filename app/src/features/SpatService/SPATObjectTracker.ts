@@ -330,3 +330,5 @@
 // export const isSPATTracking = (): boolean => tracker.isCurrentlyTracking();
 // export const hasSPATTrackingCompleted = (): boolean => tracker.hasAlreadyRun();
 // export const getSPATAppearanceCount = (): number => tracker.getAppearanceCount();
+
+export default {};

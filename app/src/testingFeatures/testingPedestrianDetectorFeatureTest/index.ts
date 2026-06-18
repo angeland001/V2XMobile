@@ -44,3 +44,6 @@ export const runDetectionZoneEntryTest = (): boolean => {
     return false;
   }
 };
+
+import { TestingPedestrianDetectorViewModel } from './viewmodels/TestingPedestrianDetectorViewModel';
+export default TestingPedestrianDetectorViewModel;

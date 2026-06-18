@@ -195,3 +195,5 @@ const styles = StyleSheet.create({
   },
   apiNoteText: { fontSize: 11, color: COLORS.textDim },
 });
+
+export default WeatherScreen;

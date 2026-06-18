@@ -191,3 +191,5 @@ export class MainViewModel {
     }
   }
 }
+
+export default MainViewModel;

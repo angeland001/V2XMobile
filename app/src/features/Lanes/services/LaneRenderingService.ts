@@ -89,3 +89,5 @@ export class LaneRenderingService {
     });
   }
 }
+
+export default LaneRenderingService;

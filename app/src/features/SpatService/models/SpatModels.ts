@@ -180,3 +180,5 @@ export interface ApproachSignalStatus {
   timestamp: number;
   estimatedTimeToChange?: number;
 }
+
+export default {};

@@ -128,3 +128,5 @@ const styles = StyleSheet.create({
     top: 6,
   },
 });
+
+export default HeadingMarker;

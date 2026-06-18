@@ -174,3 +174,5 @@ export class EnhancedLaneDetectionService {
     return result;
   }
 }
+
+export default EnhancedLaneDetectionService;

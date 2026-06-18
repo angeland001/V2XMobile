@@ -83,3 +83,5 @@ export const CombinedTurnIcon: React.FC<CombinedTurnIconProps> = ({
 const styles = StyleSheet.create({
   container: { justifyContent: 'center', alignItems: 'center' },
 });
+
+export default CombinedTurnIcon;
