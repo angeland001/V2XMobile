@@ -23,8 +23,8 @@ export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onT
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: 92,
-    alignSelf: 'center',
+    top: 184,
+    right: 16,
     zIndex: 1200,
     alignItems: 'center',
     gap: 8,

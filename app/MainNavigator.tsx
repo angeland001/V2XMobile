@@ -36,6 +36,11 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
     [viewModel],
   );
 
+  const SettingsScreenWrapped = useCallback(
+    () => <SettingsScreen settingsViewModel={viewModel.settingsViewModel} />,
+    [viewModel],
+  );
+
   const unread = viewModel.timService.unreadAlertCount;
 
   return (
@@ -124,7 +129,7 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
           />
           <CurvedBottomBarExpo.Screen
             name="settings"
-            component={SettingsScreen as any}
+            component={SettingsScreenWrapped as any}
             position="RIGHT"
           />
         </CurvedBottomBarExpo.Navigator>

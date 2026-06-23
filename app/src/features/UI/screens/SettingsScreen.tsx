@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,10 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { observer } from 'mobx-react-lite';
 import { COLORS } from '../theme';
 import { API_CONFIG } from '../../../core/api/config';
+import { SettingsViewModel } from '../viewmodels/SettingsViewModel';
 
 interface ToggleRowProps {
   label: string;
@@ -53,12 +55,11 @@ const InfoRow: React.FC<InfoRowProps> = ({ label, value, icon }) => (
   </View>
 );
 
-export const SettingsScreen: React.FC = () => {
-  const [safetyAlerts, setSafetyAlerts]       = useState(true);
-  const [regulatoryAlerts, setRegulatoryAlerts] = useState(true);
-  const [showVehicles, setShowVehicles]         = useState(true);
-  const [showLanes, setShowLanes]               = useState(true);
+interface SettingsScreenProps {
+  settingsViewModel: SettingsViewModel;
+}
 
+export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ settingsViewModel }) => {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -77,16 +78,24 @@ export const SettingsScreen: React.FC = () => {
             icon="warning-outline"
             label="Safety Alerts"
             sublabel="Work zones, hazards"
-            value={safetyAlerts}
-            onToggle={setSafetyAlerts}
+            value={settingsViewModel.safetyAlerts}
+            onToggle={(v) => { settingsViewModel.safetyAlerts = v; }}
           />
           <View style={styles.cardDivider} />
           <ToggleRow
             icon="construct-outline"
             label="Regulatory Alerts"
             sublabel="Speed zones, no-pass zones"
-            value={regulatoryAlerts}
-            onToggle={setRegulatoryAlerts}
+            value={settingsViewModel.regulatoryAlerts}
+            onToggle={(v) => { settingsViewModel.regulatoryAlerts = v; }}
+          />
+          <View style={styles.cardDivider} />
+          <ToggleRow
+            icon="information-circle-outline"
+            label="Informational Alerts"
+            sublabel="Congestion, parking, detours"
+            value={settingsViewModel.informationalAlerts}
+            onToggle={(v) => { settingsViewModel.informationalAlerts = v; }}
           />
         </View>
 
@@ -96,16 +105,16 @@ export const SettingsScreen: React.FC = () => {
             icon="car-outline"
             label="Show V2X Vehicles"
             sublabel="Render SDSM vehicle markers"
-            value={showVehicles}
-            onToggle={setShowVehicles}
+            value={settingsViewModel.showVehicles}
+            onToggle={(v) => { settingsViewModel.showVehicles = v; }}
           />
           <View style={styles.cardDivider} />
           <ToggleRow
             icon="git-branch-outline"
             label="Show Lane Data"
             sublabel="Overlay lane geometry on map"
-            value={showLanes}
-            onToggle={setShowLanes}
+            value={settingsViewModel.showLanes}
+            onToggle={(v) => { settingsViewModel.showLanes = v; }}
           />
         </View>
 
@@ -136,7 +145,7 @@ export const SettingsScreen: React.FC = () => {
       </ScrollView>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

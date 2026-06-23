@@ -1,7 +1,7 @@
 import { makeAutoObservable, runInAction } from 'mobx';
 import type { SpatZone } from '../../SpatService/services/SpatZoneService';
 import { SpatZoneService } from '../../SpatService/services/SpatZoneService';
-import type { PreemptionZoneConfig, SrmPayload } from '../models/PreemptionModels';
+import type { PreemptionZoneConfig, SrmPayload, SsmStatus } from '../models/PreemptionModels';
 import { PreemptionApiService } from '../services/PreemptionApiService';
 import { PreemptionConfigService } from '../services/PreemptionConfigService';
 import { RetryService } from '../services/RetryService';
@@ -12,6 +12,8 @@ export class PreemptionViewModel {
   // Session state
   sessionId: string | null = null;
   insideZone = false;
+  ssmStatus: SsmStatus = null;
+  activeZoneName: string | null = null;
 
   private previousPosition: [number, number] | null = null;
   private wasInsideZone = false;
@@ -177,6 +179,9 @@ export class PreemptionViewModel {
       return;
     }
 
+    this.ssmStatus = 'requesting';
+    this.activeZoneName = zone.name;
+
     console.log('[Preemption] START: Building SRM payload and calling /preempt/start');
 
     const laneId =
@@ -194,18 +199,22 @@ export class PreemptionViewModel {
 
     // Call START with SRM payload
     console.log('[Preemption] Calling /preempt/start for zone:', zone.name);
-    const sessionId = await this.callStart(srmPayload);
+    const result = await this.callStart(srmPayload);
     runInAction(() => {
-      if (sessionId) {
-        this.sessionId = sessionId;
+      if (result) {
+        this.sessionId = result.sessionId;
+        this.ssmStatus = result.ssmStatus;
         console.log(
           '[Preemption] START successful. Zone:',
           zone.name,
           'Session ID:',
-          sessionId,
+          result.sessionId,
+          'SSM Status:',
+          result.ssmStatus,
         );
         // Heartbeat will be started in syncPosition
       } else {
+        this.ssmStatus = null;
         console.log(
           '[Preemption] START failed for zone:',
           zone.name,
@@ -259,6 +268,8 @@ export class PreemptionViewModel {
 
     // Reset session state
     this.sessionId = null;
+    this.ssmStatus = null;
+    this.activeZoneName = null;
     this.validEntry = false;
 
     console.log('[Preemption] Session cleared');
@@ -266,12 +277,12 @@ export class PreemptionViewModel {
 
   // ============ API Calls (Mocks for now) ============
 
-  private async callStart(payload: SrmPayload): Promise<string | null> {
+  private async callStart(payload: SrmPayload): Promise<{ sessionId: string; ssmStatus: 'granted' | 'cancelled' } | null> {
     console.log('[API] POST /preempt/start');
     console.log('[API] Request body:', JSON.stringify(payload, null, 2));
 
     try {
-      const sessionId = await RetryService.withFetchRetry(
+      const result = await RetryService.withFetchRetry(
         async () =>
           fetch(
             'http://roadaware.cuip.research.utc.edu/preemptapi/preempt/start',
@@ -292,12 +303,13 @@ export class PreemptionViewModel {
             throw new Error('No session_id in response');
           }
 
-          return data.session_id;
+          const ssmStatus = (data?.ssm?.value?.[1]?.status ?? 'granted') as 'granted' | 'cancelled';
+          return { sessionId: data.session_id as string, ssmStatus };
         },
         { maxRetries: 3 },
       );
 
-      return sessionId;
+      return result;
     } catch (error) {
       console.log('[API] START failed after retries:', error);
       return null;
@@ -329,6 +341,10 @@ export class PreemptionViewModel {
           const data = await response.json();
           if (Math.random() < 0.1) {
             console.log('[API] Response 200:', data);
+          }
+          const status = data?.ssm?.value?.[1]?.status as 'granted' | 'cancelled' | undefined;
+          if (status && status !== this.ssmStatus) {
+            runInAction(() => { this.ssmStatus = status; });
           }
           return true;
         },

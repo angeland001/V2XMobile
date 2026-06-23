@@ -20,7 +20,7 @@ export const AppNavigator: React.FC = () => {
     <View style={{ flex: 1 }}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent animated />
       <MainNavigator viewModel={mainViewModel} />
-      <TimToast timService={mainViewModel.timService} />
+      <TimToast timService={mainViewModel.timService} settingsViewModel={mainViewModel.settingsViewModel} />
     </View>
   );
 };

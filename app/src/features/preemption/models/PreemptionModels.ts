@@ -37,4 +37,6 @@ export interface SrmPayload {
   ];
 }
 
+export type SsmStatus = 'requesting' | 'granted' | 'cancelled' | null;
+
 export default {};
