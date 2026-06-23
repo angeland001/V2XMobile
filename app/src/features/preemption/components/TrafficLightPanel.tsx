@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
+import type { SsmStatus } from '../models/PreemptionModels';
 
 export type TrafficLightState = 'red' | 'yellow' | 'green' | null;
 
@@ -8,7 +9,7 @@ interface TrafficLightPanelProps {
   intersectionName?: string;
   progress?: number; // 0–1
   durationLabel?: string;
-  sessionActive?: boolean;
+  ssmStatus?: SsmStatus;
 }
 
 const LIGHTS: {
@@ -37,14 +38,25 @@ const LIGHTS: {
   },
 ];
 
+const STATUS_CONFIG: Record<
+  Exclude<SsmStatus, null>,
+  { label: string; color: string; borderColor: string }
+> = {
+  requesting: { label: 'REQUESTING...', color: '#FFD60A', borderColor: '#333' },
+  granted:    { label: 'SIGNAL GRANTED', color: '#30D158', borderColor: '#30D158' },
+  cancelled:  { label: 'SIGNAL LOST',   color: '#FF3B30', borderColor: '#FF3B30' },
+};
+
 export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   activeLight = null,
   intersectionName,
   progress = 0,
   durationLabel = '--',
-  sessionActive = false,
+  ssmStatus = null,
 }) => {
   const progressAnim = useRef(new Animated.Value(progress)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -54,6 +66,27 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
     }).start();
   }, [progress]);
 
+  useEffect(() => {
+    if (ssmStatus === 'requesting') {
+      pulseLoopRef.current = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        ]),
+      );
+      pulseLoopRef.current.start();
+    } else {
+      pulseLoopRef.current?.stop();
+      pulseAnim.setValue(1);
+    }
+    return () => {
+      pulseLoopRef.current?.stop();
+    };
+  }, [ssmStatus]);
+
+  const statusConfig = ssmStatus ? STATUS_CONFIG[ssmStatus] : null;
+  const housingBorderColor = statusConfig?.borderColor ?? '#333';
+
   return (
     <View style={styles.wrapper}>
       {intersectionName ? (
@@ -61,13 +94,21 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
           <Text style={styles.nameText} numberOfLines={2}>
             {intersectionName}
           </Text>
-          {sessionActive && (
-            <Text style={styles.preemptedLabel}>PREEMPTED</Text>
+          {statusConfig && (
+            <Animated.Text
+              style={[
+                styles.statusLabel,
+                { color: statusConfig.color },
+                ssmStatus === 'requesting' && { opacity: pulseAnim },
+              ]}
+            >
+              {statusConfig.label}
+            </Animated.Text>
           )}
         </View>
       ) : null}
 
-      <View style={styles.housing}>
+      <View style={[styles.housing, { borderColor: housingBorderColor }]}>
         <View style={styles.bolt} />
 
         {LIGHTS.map(({ key, activeColor, glowColor, dimColor }) => {
@@ -141,8 +182,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 13,
   },
-  preemptedLabel: {
-    color: '#FF8C00',
+  statusLabel: {
     fontSize: 7,
     fontWeight: '700',
     letterSpacing: 0.8,

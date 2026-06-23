@@ -716,7 +716,16 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           testingVehicleDisplayViewModel={testingVehicleDisplayViewModel}
         />
 
-        <TrafficLightPanel />
+        <TrafficLightPanel
+          ssmStatus={preemptionViewModel.ssmStatus}
+          intersectionName={preemptionViewModel.activeZoneName ?? undefined}
+          activeLight={
+            spatViewModel.signalState === SignalState.GREEN ? 'green' :
+            spatViewModel.signalState === SignalState.RED ? 'red' :
+            spatViewModel.signalState === SignalState.YELLOW ? 'yellow' :
+            null
+          }
+        />
 
         <TurnGuideDisplay spatViewModel={spatViewModel} />
 
