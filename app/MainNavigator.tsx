@@ -41,6 +41,11 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
     [viewModel],
   );
 
+  const RouteScreenWrapped = useCallback(
+    () => <RouteScreen routeViewModel={viewModel.routeViewModel} />,
+    [viewModel],
+  );
+
   const unread = viewModel.timService.unreadAlertCount;
 
   return (
@@ -114,7 +119,7 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
         >
           <CurvedBottomBarExpo.Screen
             name="route"
-            component={RouteScreen as any}
+            component={RouteScreenWrapped as any}
             position="LEFT"
           />
           <CurvedBottomBarExpo.Screen

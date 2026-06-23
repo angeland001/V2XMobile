@@ -1,5 +1,3 @@
-const googleMapsApiKey = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '';
-
 module.exports = {
   expo: {
     name: 'V2X Mobile',
@@ -13,6 +11,12 @@ module.exports = {
         },
       ],
       'expo-sqlite',
+      [
+        '@rnmapbox/maps',
+        {
+          RNMapboxMapsDownloadToken: process.env.MAPBOX_SECRET_TOKEN || '',
+        },
+      ],
     ],
     assetBundlePatterns: [
       'assets/database/*',
@@ -33,20 +37,12 @@ module.exports = {
         'android.permission.ACCESS_COARSE_LOCATION',
         'android.permission.ACCESS_FINE_LOCATION',
       ],
-      config: {
-        googleMaps: {
-          apiKey: googleMapsApiKey,
-        },
-      },
     },
     ios: {
       infoPlist: {
         NSLocationWhenInUseUsageDescription: 'This app needs access to your location to show it on the map.',
       },
       bundleIdentifier: 'com.yosifmohamedain.mapboxapp',
-      config: {
-        googleMapsApiKey,
-      },
     },
   },
 };

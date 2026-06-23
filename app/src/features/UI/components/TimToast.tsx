@@ -19,8 +19,8 @@ const TOAST_COLORS = {
 };
 
 function severityInfo(severity: number): { label: string; color: string } {
-  if (severity >= 7) return { label: 'CRITICAL', color: '#EF4444' };
-  if (severity >= 5) return { label: 'HIGH',     color: '#F97316' };
+  if (severity >= 5) return { label: 'CRITICAL', color: '#EF4444' };
+  if (severity >= 4) return { label: 'HIGH',     color: '#F97316' };
   if (severity >= 3) return { label: 'MODERATE', color: '#F59E0B' };
   if (severity >= 1) return { label: 'LOW',      color: '#22C55E' };
   return { label: 'UNKNOWN', color: 'rgba(241,245,249,0.4)' };

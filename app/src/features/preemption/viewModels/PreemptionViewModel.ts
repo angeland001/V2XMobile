@@ -14,12 +14,15 @@ export class PreemptionViewModel {
   insideZone = false;
   ssmStatus: SsmStatus = null;
   activeZoneName: string | null = null;
+  heartbeatProgress = 0; // 0–1, cycles every 1.5 s while heartbeat is running
 
   private previousPosition: [number, number] | null = null;
   private wasInsideZone = false;
   private validEntry = false;
   private trackedZoneId: string | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private progressInterval: NodeJS.Timeout | null = null;
+  private heartbeatCycleStart: number | null = null;
 
   // GPS Debounce: require 3 consecutive samples in same zone to trigger change
   private zoneDetectionBuffer: string[] = [];
@@ -225,16 +228,30 @@ export class PreemptionViewModel {
   }
 
   private startHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      return; // Already running
-    }
+    if (this.heartbeatInterval) return;
 
-    // Heartbeat every 1.5 seconds (within 1-2 second range)
+    this.heartbeatCycleStart = Date.now();
+
+    // Main heartbeat every 1.5 s
     this.heartbeatInterval = setInterval(() => {
       if (this.sessionId && this.insideZone && this.isEnabled) {
         this.callHeartbeat(this.sessionId);
+        // Reset cycle so the progress bar restarts from 0
+        runInAction(() => {
+          this.heartbeatProgress = 0;
+          this.heartbeatCycleStart = Date.now();
+        });
       }
     }, 1500);
+
+    // Progress ticker at 10 Hz — drives the progress bar in the UI
+    this.progressInterval = setInterval(() => {
+      if (this.heartbeatCycleStart === null) return;
+      const elapsed = Date.now() - this.heartbeatCycleStart;
+      runInAction(() => {
+        this.heartbeatProgress = Math.min(1, elapsed / 1500);
+      });
+    }, 100);
 
     console.log('[Preemption] Heartbeat started (1.5 second interval)');
   }
@@ -243,8 +260,14 @@ export class PreemptionViewModel {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
-      console.log('[Preemption] Heartbeat stopped');
     }
+    if (this.progressInterval) {
+      clearInterval(this.progressInterval);
+      this.progressInterval = null;
+    }
+    this.heartbeatCycleStart = null;
+    runInAction(() => { this.heartbeatProgress = 0; });
+    console.log('[Preemption] Heartbeat stopped');
   }
 
   private onZoneExit(): void {

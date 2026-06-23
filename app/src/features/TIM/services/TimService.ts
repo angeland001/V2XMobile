@@ -29,6 +29,12 @@ export interface TimAlertLogItem {
   message: string;
   timestamp: number;
   timId: number;
+  severity: number;
+  timType: string;
+  itisCodes: number[];
+  validFrom: string | null;
+  validUntil: string | null;
+  geometry: { type: 'Polygon'; coordinates: number[][][] };
 }
 
 export class TimService {
@@ -180,6 +186,12 @@ export class TimService {
         message,
         timestamp: Date.now(),
         timId: tim.id,
+        severity: tim.severity,
+        timType: tim.tim_type,
+        itisCodes: tim.itis_codes,
+        validFrom: tim.valid_from,
+        validUntil: tim.valid_until,
+        geometry: tim.geometry,
       });
       this.unreadAlertCount += 1;
 

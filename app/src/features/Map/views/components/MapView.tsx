@@ -2,12 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
-import RNMapView, {
-  Marker,
-  Polygon,
-  PROVIDER_GOOGLE,
-  type MapType,
-} from "react-native-maps";
+import MapboxGL from "@rnmapbox/maps";
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from "mobx-react-lite";
 import * as Location from "expo-location";
@@ -36,31 +31,23 @@ import { PreemptionToggle } from "../../../preemption/components/PreemptionToggl
 import { PreemptionViewModel } from "../../../preemption/viewModels/PreemptionViewModel";
 import { SpatZone, SpatZoneService } from "../../../SpatService/services/SpatZoneService";
 import { SignalState } from "../../../SpatService/models/SpatModels";
-import { toGooglePath, toGooglePathFlexible } from "../../../../core/maps/coordinates";
+import { closeRing, normalizeToLngLat, type LngLat } from "../../../../core/maps/coordinates";
+
+MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
 // ---------------------------------------------------------------------------
 // TIMLayer — renders active TIM zones, colored by category
 // ---------------------------------------------------------------------------
 
 const TIM_CATEGORY_STYLES = {
-  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444', icon: 'warning' as const,           iconColor: '#EF4444' },
-  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B', icon: 'ban' as const,               iconColor: '#F59E0B' },
+  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444', icon: 'warning' as const,            iconColor: '#EF4444' },
+  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B', icon: 'ban' as const,                iconColor: '#F59E0B' },
   informational: { fill: 'rgba(59, 130, 246, 0.25)', stroke: '#3B82F6', icon: 'information-circle' as const, iconColor: '#3B82F6' },
 } as const;
 
-const polygonCentroid = (coords: { latitude: number; longitude: number }[]) => ({
-  latitude:  coords.reduce((s, c) => s + c.latitude,  0) / coords.length,
-  longitude: coords.reduce((s, c) => s + c.longitude, 0) / coords.length,
-});
-
-const DARK_GOOGLE_MAP_STYLE = [
-  { elementType: "geometry", stylers: [{ color: "#1f2937" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#d1d5db" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#111827" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#374151" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#f3f4f6" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0f172a" }] },
-  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#263244" }] },
+const lngLatCentroid = (coords: LngLat[]): [number, number] => [
+  coords.reduce((s, c) => s + c[0], 0) / coords.length,
+  coords.reduce((s, c) => s + c[1], 0) / coords.length,
 ];
 
 interface TIMLayerProps {
@@ -85,29 +72,41 @@ const TIMLayer: React.FC<TIMLayerProps> = observer(({ mainViewModel }) => {
     <>
       {visibleTims.map((tim) => {
         const style = TIM_CATEGORY_STYLES[tim.category] ?? TIM_CATEGORY_STYLES.informational;
-        const coordinates = toGooglePathFlexible(tim.geometry.coordinates[0] as [number, number][]);
+        const rawOuter = tim.geometry.coordinates[0] as [number, number][];
+        const outerCoords = rawOuter.map(normalizeToLngLat);
+        if (outerCoords.length < 3) return null;
+
+        const outerRing = closeRing(outerCoords);
         const holes = tim.geometry.coordinates
           .slice(1)
-          .map((ring) => toGooglePathFlexible(ring as [number, number][]))
+          .map((ring) => closeRing((ring as [number, number][]).map(normalizeToLngLat)))
           .filter((ring) => ring.length >= 3);
-        if (coordinates.length < 3) return null;
 
-        const centroid = polygonCentroid(coordinates);
+        const centroid = lngLatCentroid(outerCoords);
+
+        const shape: GeoJSON.Feature<GeoJSON.Polygon> = {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'Polygon', coordinates: [outerRing, ...holes] },
+        };
 
         return (
           <React.Fragment key={`tim-${tim.id}`}>
-            <Polygon
-              coordinates={coordinates}
-              holes={holes}
-              fillColor={style.fill}
-              strokeColor={style.stroke}
-              strokeWidth={2.5}
-            />
-            <Marker coordinate={centroid} anchor={{ x: 0.5, y: 0.5 }} tracksViewChanges={false}>
+            <MapboxGL.ShapeSource id={`tim-source-${tim.id}`} shape={shape}>
+              <MapboxGL.FillLayer
+                id={`tim-fill-${tim.id}`}
+                style={{ fillColor: style.fill }}
+              />
+              <MapboxGL.LineLayer
+                id={`tim-line-${tim.id}`}
+                style={{ lineColor: style.stroke, lineWidth: 2.5 }}
+              />
+            </MapboxGL.ShapeSource>
+            <MapboxGL.MarkerView key={`tim-marker-${tim.id}`} coordinate={centroid}>
               <View style={{ backgroundColor: 'white', borderRadius: 20, padding: 4, borderWidth: 1.5, borderColor: style.stroke }}>
                 <Ionicons name={style.icon} size={20} color={style.iconColor} />
               </View>
-            </Marker>
+            </MapboxGL.MarkerView>
           </React.Fragment>
         );
       })}
@@ -140,33 +139,29 @@ const CrosswalkLayer: React.FC<CrosswalkLayerProps> = observer(
     return (
       <>
         {CROSSWALK_POLYGONS.map((polygonCoords, index) => {
-          const count = CrosswalkDetectionService.countPedestriansInSpecificCrosswalk(
-            vrus,
-            index,
-          );
-          const shape = {
-            type: "Feature" as const,
-            properties: { crosswalkId: index, name: `Crosswalk ${index + 1}` },
-            geometry: {
-              type: "Polygon" as const,
-              coordinates: [polygonCoords],
-            },
+          const count = CrosswalkDetectionService.countPedestriansInSpecificCrosswalk(vrus, index);
+          const ring = closeRing(polygonCoords);
+          if (ring.length < 3) return null;
+
+          const shape: GeoJSON.Feature<GeoJSON.Polygon> = {
+            type: 'Feature',
+            properties: {},
+            geometry: { type: 'Polygon', coordinates: [ring] },
           };
-          const coordinates = toGooglePath(shape.geometry.coordinates[0]);
-          if (coordinates.length < 3) return null;
 
           return (
-            <Polygon
-              key={`crosswalk-${index}`}
-              coordinates={coordinates}
-              fillColor={
-                count > 0
-                  ? "rgba(255, 59, 48, 0.4)"
-                  : "rgba(255, 255, 0, 0.4)"
-              }
-              strokeColor="#FFCC00"
-              strokeWidth={2}
-            />
+            <MapboxGL.ShapeSource key={`crosswalk-source-${index}`} id={`crosswalk-source-${index}`} shape={shape}>
+              <MapboxGL.FillLayer
+                id={`crosswalk-fill-${index}`}
+                style={{
+                  fillColor: count > 0 ? 'rgba(255, 59, 48, 0.4)' : 'rgba(255, 255, 0, 0.4)',
+                }}
+              />
+              <MapboxGL.LineLayer
+                id={`crosswalk-line-${index}`}
+                style={{ lineColor: '#FFCC00', lineWidth: 2 }}
+              />
+            </MapboxGL.ShapeSource>
           );
         })}
       </>
@@ -245,22 +240,74 @@ const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpa
           lineWidth = 1.5;
         }
 
-        const coordinates = toGooglePathFlexible(zone.polygon);
-        if (coordinates.length < 3) return null;
+        // zone.polygon is already LngLat[] — close the ring for GeoJSON
+        const ring = closeRing(zone.polygon as LngLat[]);
+        if (ring.length < 3) return null;
+
+        const shape: GeoJSON.Feature<GeoJSON.Polygon> = {
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'Polygon', coordinates: [ring] },
+        };
 
         return (
-          <Polygon
-            key={`spat-zone-${zone.id}`}
-            coordinates={coordinates}
-            fillColor={fillColor}
-            strokeColor={lineColor}
-            strokeWidth={lineWidth}
-          />
+          <MapboxGL.ShapeSource key={`spat-source-${zone.id}`} id={`spat-source-${zone.id}`} shape={shape}>
+            <MapboxGL.FillLayer
+              id={`spat-fill-${zone.id}`}
+              style={{ fillColor }}
+            />
+            <MapboxGL.LineLayer
+              id={`spat-line-${zone.id}`}
+              style={{ lineColor, lineWidth }}
+            />
+          </MapboxGL.ShapeSource>
         );
       })}
     </>
   );
 });
+
+// ---------------------------------------------------------------------------
+// RouteLayer — renders the active route polyline above TIM zones
+// ---------------------------------------------------------------------------
+
+interface RouteLayerProps {
+  mainViewModel: MainViewModel | null | undefined;
+}
+
+const RouteLayer: React.FC<RouteLayerProps> = observer(({ mainViewModel }) => {
+  const routeVM = mainViewModel?.routeViewModel;
+  if (!routeVM?.hasActiveRoute || routeVM.routeCoordinates.length < 2) return null;
+
+  const shape: GeoJSON.Feature<GeoJSON.LineString> = {
+    type: 'Feature',
+    properties: {},
+    geometry: { type: 'LineString', coordinates: routeVM.routeCoordinates },
+  };
+
+  return (
+    <MapboxGL.ShapeSource id="route-source" shape={shape}>
+      <MapboxGL.LineLayer
+        id="route-casing"
+        style={{ lineColor: '#1A1A2E', lineWidth: 8, lineOpacity: 0.25, lineCap: 'round', lineJoin: 'round' }}
+      />
+      <MapboxGL.LineLayer
+        id="route-line"
+        style={{ lineColor: '#FF8C00', lineWidth: 5, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+      />
+    </MapboxGL.ShapeSource>
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Map style URLs
+// ---------------------------------------------------------------------------
+
+const MAPBOX_STYLES = {
+  outdoors: MapboxGL.StyleURL.Outdoors,
+  satellite: MapboxGL.StyleURL.SatelliteStreet,
+  streets: MapboxGL.StyleURL.Street,
+} as const;
 
 // ---------------------------------------------------------------------------
 // Main MapViewComponent
@@ -292,7 +339,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     lanesViewModel: providedLanesViewModel,
     children,
   }) => {
-    const mapRef = useRef<RNMapView>(null);
+    const cameraRef = useRef<MapboxGL.Camera>(null);
     const spatViewModelRef = useRef<SpatViewModel>(new SpatViewModel());
     const lanesViewModelRef = useRef<LanesViewModel>(new LanesViewModel());
     const preemptionViewModelRef = useRef<PreemptionViewModel>(new PreemptionViewModel());
@@ -316,6 +363,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const [userHeading, setUserHeading] = useState(0);
     const zoomLevelRef = useRef(17);
 
+    const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("outdoors");
+
     const [toastMsg, setToastMsg] = useState<string | null>(null);
     const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -331,28 +380,32 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
     const handleZoomIn = () => {
       zoomLevelRef.current = Math.min(zoomLevelRef.current + 1, 22);
-      mapRef.current?.animateCamera({ zoom: zoomLevelRef.current }, { duration: 300 });
+      cameraRef.current?.setCamera({ zoomLevel: zoomLevelRef.current, animationDuration: 300 });
     };
 
     const handleZoomOut = () => {
       zoomLevelRef.current = Math.max(zoomLevelRef.current - 1, 1);
-      mapRef.current?.animateCamera({ zoom: zoomLevelRef.current }, { duration: 300 });
+      cameraRef.current?.setCamera({ zoomLevel: zoomLevelRef.current, animationDuration: 300 });
     };
 
     const handleLocateUser = () => {
       if (userPosition[0] !== 0 && userPosition[1] !== 0) {
-        mapRef.current?.animateCamera(
-          {
-            center: { latitude: userPosition[0], longitude: userPosition[1] },
-            zoom: 17,
-          },
-          { duration: 600 },
-        );
+        isFollowingUser.current = true;
+        // userPosition is [lat, lng]; Mapbox centerCoordinate is [lng, lat]
+        cameraRef.current?.setCamera({
+          centerCoordinate: [userPosition[1], userPosition[0]],
+          zoomLevel: 17,
+          animationDuration: 600,
+        });
         zoomLevelRef.current = 17;
       }
     };
 
-    const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("outdoors");
+    const handleRegionWillChange = (feature: GeoJSON.Feature) => {
+      if ((feature.properties as any)?.isUserInteraction) {
+        isFollowingUser.current = false;
+      }
+    };
 
     const cycleMapLayer = () => {
       setMapLayer((prev) => {
@@ -362,15 +415,12 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       });
     };
 
-    const GOOGLE_MAP_TYPES: Record<typeof mapLayer, MapType> = {
-      outdoors: "terrain",
-      satellite: "hybrid",
-      streets: "standard",
-    };
+    const styleURL = isDarkMode ? MapboxGL.StyleURL.Dark : MAPBOX_STYLES[mapLayer];
 
     const lastCameraUpdate = useRef<number>(0);
     const lastStateUpdate = useRef<number>(0);
     const hasInitialFix = useRef(false);
+    const isFollowingUser = useRef(false);
 
     const activeDetector = isTestingMode
       ? testingPedestrianDetectorViewModel
@@ -390,28 +440,30 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       Math.abs(a[0] - b[0]) < 0.000001 && Math.abs(a[1] - b[1]) < 0.000001;
 
     const updateCameraPosition = (position: [number, number]) => {
+      // position is [lat, lng]; Mapbox centerCoordinate is [lng, lat]
       if (position[0] === 0 && position[1] === 0) return;
 
       if (!hasInitialFix.current) {
         hasInitialFix.current = true;
-        mapRef.current?.animateCamera(
-          { center: { latitude: position[0], longitude: position[1] }, zoom: 17 },
-          { duration: 0 },
-        );
+        isFollowingUser.current = true;
+        cameraRef.current?.setCamera({
+          centerCoordinate: [position[1], position[0]],
+          zoomLevel: 17,
+          animationDuration: 0,
+        });
         return;
       }
+
+      if (!isFollowingUser.current) return;
 
       const now = Date.now();
       if (now - lastCameraUpdate.current < 50) return; // 20 Hz cap
       lastCameraUpdate.current = now;
 
-      // duration: 0 — instant snap per update. Avoids interrupted-animation stutter
-      // that occurs when duration > update interval. At 20 Hz the steps are small
-      // enough to look fluid at any realistic driving speed.
-      mapRef.current?.animateCamera(
-        { center: { latitude: position[0], longitude: position[1] } },
-        { duration: 0 },
-      );
+      cameraRef.current?.setCamera({
+        centerCoordinate: [position[1], position[0]],
+        animationDuration: 0,
+      });
     };
 
     const handlePositionUpdate = (
@@ -432,8 +484,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         updateAllViewModels(newPosition);
       }
 
-      // React state (re-render): throttled to 5 Hz so the MapView component
-      // tree doesn't reconcile 20× per second and drop frames during navigation.
+      // React state (re-render): throttled to 5 Hz
       const now = Date.now();
       if (now - lastStateUpdate.current >= 200) {
         lastStateUpdate.current = now;
@@ -450,20 +501,12 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       handlePositionUpdate(latitude, longitude, heading);
     };
 
-    // Fallback for Android emulator: watchPositionAsync doesn't always fire for
-    // manual Extended Controls location changes, but the Maps SDK callback does.
-    const handleMapUserLocationChange = (event: {
-      nativeEvent: {
-        coordinate?: {
-          latitude?: number;
-          longitude?: number;
-          heading?: number;
-        };
-      };
-    }) => {
-      const coordinate = event.nativeEvent.coordinate;
-      if (!coordinate?.latitude || !coordinate?.longitude) return;
-      handlePositionUpdate(coordinate.latitude, coordinate.longitude, coordinate.heading);
+    // Mapbox UserLocation callback — serves the same role as onUserLocationChange
+    // in react-native-maps (fallback for Android emulator GPS updates)
+    const handleMapboxLocationUpdate = (location: MapboxGL.Location) => {
+      const { latitude, longitude, heading } = location.coords;
+      if (!latitude || !longitude) return;
+      handlePositionUpdate(latitude, longitude, heading ?? null);
     };
 
     const updateAllViewModels = (position: [number, number]) => {
@@ -508,7 +551,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       setActiveSpatZoneId(activeZone?.id || null);
     }, [userPosition]);
 
-    // Location tracking
+    // Location tracking via expo-location (primary)
     useEffect(() => {
       let locationSubscription: Location.LocationSubscription;
 
@@ -621,28 +664,33 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           </View>
         )}
 
-        <RNMapView
-          ref={mapRef}
+        <MapboxGL.MapView
           style={styles.map}
-          provider={PROVIDER_GOOGLE}
-          mapType={GOOGLE_MAP_TYPES[mapLayer]}
-          customMapStyle={isDarkMode ? DARK_GOOGLE_MAP_STYLE : []}
-          renderToHardwareTextureAndroid
-          initialRegion={{
-            latitude: 35.0454,
-            longitude: -85.3075,
-            latitudeDelta: 0.005,
-            longitudeDelta: 0.005,
-          }}
-          showsUserLocation={true}
-          showsMyLocationButton={false}
-          onUserLocationChange={handleMapUserLocationChange}
-          showsCompass={false}
+          styleURL={styleURL}
           rotateEnabled={true}
           scrollEnabled={true}
           pitchEnabled={true}
           zoomEnabled={true}
+          compassEnabled={false}
+          logoEnabled={false}
+          attributionEnabled={false}
+          onRegionWillChange={handleRegionWillChange}
         >
+          <MapboxGL.Camera
+            ref={cameraRef}
+            defaultSettings={{
+              centerCoordinate: [-85.3075, 35.0454],
+              zoomLevel: 17,
+            }}
+          />
+
+          {/* Built-in user location puck; onUpdate fires on every GPS update
+              (fallback for Android emulator Extended Controls changes) */}
+          <MapboxGL.UserLocation
+            visible={true}
+            onUpdate={handleMapboxLocationUpdate}
+          />
+
           {/* Crosswalk polygons — isolated observer, re-renders only when VRUs change */}
           <CrosswalkLayer
             vehicleDisplayVM={vehicleDisplayVM ?? null}
@@ -657,6 +705,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           />
 
           <TIMLayer mainViewModel={mainViewModel} />
+
+          <RouteLayer mainViewModel={mainViewModel} />
 
           {(mainViewModel?.settingsViewModel?.showLanes ?? true) && (
             <LaneOverlay lanesViewModel={lanesViewModel} />
@@ -709,7 +759,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             )}
 
           {children}
-        </RNMapView>
+        </MapboxGL.MapView>
 
         <TestingModeOverlay
           isTestingMode={isTestingMode}
@@ -719,6 +769,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         <TrafficLightPanel
           ssmStatus={preemptionViewModel.ssmStatus}
           intersectionName={preemptionViewModel.activeZoneName ?? undefined}
+          progress={preemptionViewModel.heartbeatProgress}
           activeLight={
             spatViewModel.signalState === SignalState.GREEN ? 'green' :
             spatViewModel.signalState === SignalState.RED ? 'red' :
@@ -729,8 +780,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
         <TurnGuideDisplay spatViewModel={spatViewModel} />
 
-        {/* Pedestrian warning — isolated observer, re-renders only when
-            isVehicleNearPedestrianInCrosswalk changes */}
         <PedestrianWarning activeDetector={activeDetector ?? null} />
       </View>
     );
@@ -743,9 +792,6 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
-  },
-userLocationDotInSpat: {
-    backgroundColor: '#F97316',
   },
   toast: {
     position: 'absolute',
