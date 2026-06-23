@@ -13,6 +13,7 @@ import { SpatViewModel } from '../../features/SpatService/viewModels/SpatViewMod
 import { SpatZoneService } from '../../features/SpatService/services/SpatZoneService';
 import { TimService } from '../../features/TIM/services/TimService';
 import { SettingsViewModel } from '../../features/UI/viewmodels/SettingsViewModel';
+import { RouteViewModel } from '../../features/Route/viewmodels/RouteViewModel';
 
 export class MainViewModel {
   mapViewModel: MapViewModel;
@@ -24,6 +25,7 @@ export class MainViewModel {
   spatViewModel: SpatViewModel;
   timService: TimService;
   settingsViewModel: SettingsViewModel;
+  routeViewModel: RouteViewModel;
   private positionSyncInterval: NodeJS.Timeout | null = null;
   
   isTestingMode: boolean = TESTING_CONFIG.USE_TESTING_MODE;
@@ -35,6 +37,7 @@ export class MainViewModel {
     this.spatViewModel = new SpatViewModel();
     this.timService = new TimService();
     this.settingsViewModel = new SettingsViewModel();
+    this.routeViewModel = new RouteViewModel(this.timService);
     
     if (TESTING_CONFIG.USE_TESTING_MODE) {
       this.testingPedestrianDetectorViewModel = new TestingPedestrianDetectorViewModel();
@@ -101,6 +104,8 @@ export class MainViewModel {
             this.spatViewModel.setUserPosition([latitude, longitude]);
             const heading = this.mapViewModel.headingValid ? this.mapViewModel.userHeading : null;
             this.timService.checkProximity(latitude, longitude, heading);
+            this.routeViewModel.setUserLocation([longitude, latitude]);
+            this.routeViewModel.checkOffRoute([longitude, latitude]);
           }
         }, 500);
       } else {
@@ -180,6 +185,7 @@ export class MainViewModel {
       // Silent
     }
 
+    this.routeViewModel.clearRoute();
     this.spatViewModel.cleanup();
     this.timService.stop();
 

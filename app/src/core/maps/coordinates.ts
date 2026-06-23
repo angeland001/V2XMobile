@@ -56,4 +56,16 @@ export const toGoogleLatLngFlexible = (coordinate: [number, number]): GoogleLatL
 export const toGooglePathFlexible = (coordinates: [number, number][] = []): GoogleLatLng[] =>
   coordinates.map(toGoogleLatLngFlexible);
 
+// ---------------------------------------------------------------------------
+// Mapbox utilities — Mapbox natively uses [lng, lat] arrays (= LngLat type)
+// ---------------------------------------------------------------------------
+
+export const toMapboxPosition = (coord: LngLat): [number, number] => coord;
+
+export const toMapboxPath = (coords: LngLat[] = []): [number, number][] =>
+  coords.filter(isValidLngLat);
+
+export const closeRing = (coords: LngLat[]): LngLat[] =>
+  coords.length > 0 ? [...coords, coords[0]] : coords;
+
 export default toGoogleLatLng;

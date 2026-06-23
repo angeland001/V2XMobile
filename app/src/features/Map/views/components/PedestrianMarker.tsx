@@ -2,8 +2,7 @@
 
 import React from 'react';
 import { View, StyleSheet } from 'react-native';
-import { Marker } from 'react-native-maps';
-import { toGoogleLatLng } from '../../../../core/maps/coordinates';
+import MapboxGL from '@rnmapbox/maps';
 
 interface PedestrianMarkerProps {
   id: number;
@@ -11,26 +10,24 @@ interface PedestrianMarkerProps {
   isInCrosswalk?: boolean;
 }
 
-export const PedestrianMarker: React.FC<PedestrianMarkerProps> = ({ 
-  id, 
+export const PedestrianMarker: React.FC<PedestrianMarkerProps> = ({
+  id,
   coordinates,
   isInCrosswalk = false
 }) => {
   try {
-    // Safety check for coordinates
-    if (!coordinates || coordinates.length !== 2 || 
-        typeof coordinates[0] !== 'number' || 
+    if (!coordinates || coordinates.length !== 2 ||
+        typeof coordinates[0] !== 'number' ||
         typeof coordinates[1] !== 'number') {
       return null;
     }
-    
-    // Convert from [lat, lon] to [lon, lat] before adapting to Google Maps.
-    const mapCoordinates: [number, number] = [coordinates[1], coordinates[0]];
-    
+
+    // Input is [lat, lon]; Mapbox expects [lng, lat]
+    const mapboxCoordinate: [number, number] = [coordinates[1], coordinates[0]];
+
     return (
-      <Marker
-        identifier={`pedestrian-${id}`}
-        coordinate={toGoogleLatLng(mapCoordinates)}
+      <MapboxGL.MarkerView
+        coordinate={mapboxCoordinate}
         anchor={{ x: 0.5, y: 0.5 }}
       >
         <View style={[
@@ -39,9 +36,9 @@ export const PedestrianMarker: React.FC<PedestrianMarkerProps> = ({
         ]}>
           <View style={styles.markerInner} />
         </View>
-      </Marker>
+      </MapboxGL.MarkerView>
     );
-  } catch (error) {
+  } catch {
     return null;
   }
 };
@@ -51,16 +48,16 @@ const styles = StyleSheet.create({
     width: 18,
     height: 18,
     borderRadius: 9,
-    backgroundColor: '#FF9800',  // Default orange
+    backgroundColor: '#FF9800',
     borderWidth: 2,
     borderColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
   },
   crossingPedestrian: {
-    backgroundColor: '#FF3B30',  // Bright red for pedestrians in crosswalk
-    borderColor: '#FFFF00',      // Yellow border
-    width: 20,                   // Slightly larger
+    backgroundColor: '#FF3B30',
+    borderColor: '#FFFF00',
+    width: 20,
     height: 20,
     borderRadius: 10,
   },
