@@ -1,5 +1,7 @@
 // app/src/features/ClosestIntersection/constants/IntersectionDefinitions.ts
 
+import { Intersection } from '../models/IntersectionTypes';
+
 export interface IntersectionPolygon {
   id: string;
   name: string;
@@ -34,6 +36,19 @@ export const INTERSECTION_POLYGONS: IntersectionPolygon[] = [
     ],
     sdsmApiUrl: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Houston',
     spatApiUrl: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/mlk_spat_events/MLK_Houston'
+  }
+];
+
+export const INTERSECTIONS: Intersection[] = [
+  {
+    id: 'georgia',
+    name: 'Georgia',
+    coordinates: [-85.30816022083538, 35.04598914209872]
+  },
+  {
+    id: 'houston',
+    name: 'Houston',
+    coordinates: [-85.30538545386694, 35.04457872542267]
   }
 ];
 

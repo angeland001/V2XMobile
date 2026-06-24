@@ -366,7 +366,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("outdoors");
 
     const [toastMsg, setToastMsg] = useState<string | null>(null);
-    const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const showToast = useCallback((msg: string) => {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
