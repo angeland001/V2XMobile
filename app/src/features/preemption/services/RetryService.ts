@@ -115,8 +115,9 @@ export class RetryService {
             continue; // Try again
           } else {
             // Permanent error or out of retries
-            const errorMsg = `HTTP ${response.status}`;
-            throw new Error(errorMsg);
+            const body = await response.text().catch(() => '');
+            console.log(`[Retry] HTTP ${response.status} body:`, body);
+            throw new Error(`HTTP ${response.status}`);
           }
         }
 

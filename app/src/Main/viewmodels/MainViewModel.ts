@@ -105,7 +105,6 @@ export class MainViewModel {
             const heading = this.mapViewModel.headingValid ? this.mapViewModel.userHeading : null;
             this.timService.checkProximity(latitude, longitude, heading);
             this.routeViewModel.setUserLocation([longitude, latitude]);
-            this.routeViewModel.checkOffRoute([longitude, latitude]);
           }
         }, 500);
       } else {

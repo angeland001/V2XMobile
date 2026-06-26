@@ -1,10 +1,11 @@
-import { makeAutoObservable, runInAction } from 'mobx';
+import { makeAutoObservable, reaction, runInAction } from 'mobx';
 import {
   lineString,
   booleanIntersects,
   polygon,
   point,
   nearestPointOnLine,
+  bearing,
 } from '@turf/turf';
 import type { Feature, LineString } from 'geojson';
 import { TimService } from '../../TIM/services/TimService';
@@ -27,6 +28,7 @@ export interface TimHit {
   itisCodes: number[];
   validFrom: string | null;
   validUntil: string | null;
+  geometry: { type: 'Polygon'; coordinates: number[][][] };
 }
 
 export interface PreemptionHit {
@@ -35,8 +37,9 @@ export interface PreemptionHit {
 }
 
 const CHATT_PROXIMITY = '-85.3099,35.0456'; // Chattanooga center — biases results, doesn't hard-exclude
-const OFF_ROUTE_THRESHOLD_M = 50;
-const REROUTE_DEBOUNCE_MS = 8_000;
+const OFF_ROUTE_THRESHOLD_M = 30;
+const REROUTE_DEBOUNCE_MS = 2_500;
+const OFF_ROUTE_CHECK_INTERVAL_MS = 200;
 
 export class RouteViewModel {
   toText: string = '';
@@ -54,15 +57,23 @@ export class RouteViewModel {
   isLoadingRoute: boolean = false;
   routeError: string | null = null;
   hasActiveRoute: boolean = false;
+  isNavigating: boolean = false;
 
   timHits: TimHit[] = [];
   preemptionHits: PreemptionHit[] = [];
   isRerouting: boolean = false;
 
   private lastRerouteTime: number = 0;
+  private lastOffRouteCheck: number = 0;
 
   constructor(private timService: TimService) {
     makeAutoObservable(this);
+    // Re-analyze whenever TIM data refreshes while a route is active.
+    // Handles the case where the route is fetched before the first TIM poll completes.
+    reaction(
+      () => this.timService.activeTims.length,
+      () => { if (this.hasActiveRoute) this.analyzeTimIntersections(); },
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -153,10 +164,29 @@ export class RouteViewModel {
     this.isLoadingRoute = false;
     this.routeError = null;
     this.hasActiveRoute = false;
+    this.isNavigating = false;
     this.timHits = [];
     this.preemptionHits = [];
     this.isRerouting = false;
     this.lastRerouteTime = 0;
+  }
+
+  startNavigation(): void {
+    if (this.hasActiveRoute) this.isNavigating = true;
+  }
+
+  getRouteBearing(userLngLat: [number, number]): number | null {
+    if (this.routeCoordinates.length < 2) return null;
+    try {
+      const userPt = point(userLngLat);
+      const routeLine = lineString(this.routeCoordinates);
+      const snapped = nearestPointOnLine(routeLine, userPt, { units: 'meters' });
+      const idx = snapped.properties.index ?? 0;
+      const nextIdx = Math.min(idx + 1, this.routeCoordinates.length - 1);
+      return bearing(point(this.routeCoordinates[idx]), point(this.routeCoordinates[nextIdx]));
+    } catch {
+      return null;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -165,7 +195,10 @@ export class RouteViewModel {
 
   checkOffRoute(userLngLat: [number, number]): void {
     if (!this.hasActiveRoute || this.routeCoordinates.length < 2) return;
-    if (Date.now() - this.lastRerouteTime < REROUTE_DEBOUNCE_MS) return;
+    const now = Date.now();
+    if (now - this.lastOffRouteCheck < OFF_ROUTE_CHECK_INTERVAL_MS) return;
+    this.lastOffRouteCheck = now;
+    if (now - this.lastRerouteTime < REROUTE_DEBOUNCE_MS) return;
 
     try {
       const userPt = point(userLngLat);
@@ -300,6 +333,7 @@ export class RouteViewModel {
               itisCodes: tim.itis_codes,
               validFrom: tim.valid_from,
               validUntil: tim.valid_until,
+              geometry: tim.geometry,
             });
           }
         } catch {

@@ -1,7 +1,8 @@
 // app/src/features/Map/views/components/MapView.tsx
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { reaction } from "mobx";
 import MapboxGL from "@rnmapbox/maps";
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from "mobx-react-lite";
@@ -299,6 +300,41 @@ const RouteLayer: React.FC<RouteLayerProps> = observer(({ mainViewModel }) => {
   );
 });
 
+const DestinationMarker: React.FC<{ mainViewModel: MainViewModel | null | undefined }> = observer(({ mainViewModel }) => {
+  const routeVM = mainViewModel?.routeViewModel;
+  if (!routeVM?.hasActiveRoute || !routeVM.toCoord) return null;
+  return (
+    <MapboxGL.PointAnnotation
+      id="destination-pin"
+      coordinate={routeVM.toCoord}
+      anchor={{ x: 0.5, y: 1 }}
+    >
+      <View style={destPinStyles.container}>
+        <View style={destPinStyles.flag}>
+          <Ionicons name="flag" size={13} color="#fff" />
+        </View>
+        <View style={destPinStyles.pole} />
+      </View>
+    </MapboxGL.PointAnnotation>
+  );
+});
+
+const destPinStyles = StyleSheet.create({
+  container: { alignItems: 'center' },
+  flag: {
+    backgroundColor: '#FF8C00',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  pole: { width: 2, height: 10, backgroundColor: '#FF8C00' },
+});
+
 // ---------------------------------------------------------------------------
 // Map style URLs
 // ---------------------------------------------------------------------------
@@ -361,9 +397,11 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [userHeading, setUserHeading] = useState(0);
+    const userHeadingRef = useRef(0);
+    const [isNavigating, setIsNavigating] = useState(false);
     const zoomLevelRef = useRef(17);
 
-    const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("outdoors");
+    const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("satellite");
 
     const [toastMsg, setToastMsg] = useState<string | null>(null);
     const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -401,7 +439,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       }
     };
 
-    const handleRegionWillChange = (feature: GeoJSON.Feature) => {
+    const handleRegionIsChanging = (feature: GeoJSON.Feature) => {
       if ((feature.properties as any)?.isUserInteraction) {
         isFollowingUser.current = false;
       }
@@ -460,9 +498,14 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       if (now - lastCameraUpdate.current < 50) return; // 20 Hz cap
       lastCameraUpdate.current = now;
 
+      const navigating = mainViewModel?.routeViewModel?.isNavigating ?? false;
+      const routeBearing = navigating
+        ? (mainViewModel?.routeViewModel?.getRouteBearing([position[1], position[0]]) ?? userHeadingRef.current)
+        : undefined;
       cameraRef.current?.setCamera({
         centerCoordinate: [position[1], position[0]],
         animationDuration: 0,
+        ...(navigating ? { pitch: 45, bearing: routeBearing } : {}),
       });
     };
 
@@ -492,6 +535,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       }
 
       if (heading != null && heading >= 0) {
+        userHeadingRef.current = heading;
         setUserHeading(heading);
       }
     };
@@ -522,6 +566,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         longitude: position[1],
         heading: undefined,
       });
+
+      // Off-route detection on every meaningful GPS update (throttled internally to 200ms)
+      // — far more responsive than the 500ms MainViewModel interval
+      mainViewModel?.routeViewModel?.checkOffRoute([position[1], position[0]]);
     };
 
     // Poll for active spat zones every second
@@ -531,6 +579,36 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       const intervalId = setInterval(syncZones, 1000);
       return () => clearInterval(intervalId);
     }, []);
+
+    // React to navigation mode changes from RouteViewModel
+    useEffect(() => {
+      const routeVM = mainViewModel?.routeViewModel;
+      if (!routeVM) return;
+      return reaction(
+        () => routeVM.isNavigating,
+        (navigating) => {
+          setIsNavigating(navigating);
+          if (navigating) {
+            isFollowingUser.current = true;
+            const lngLat: [number, number] = [userPositionRef.current[1], userPositionRef.current[0]];
+            const initialBearing = routeVM.getRouteBearing(lngLat) ?? userHeadingRef.current;
+            cameraRef.current?.setCamera({
+              centerCoordinate: lngLat,
+              zoomLevel: 17,
+              pitch: 45,
+              bearing: initialBearing,
+              animationDuration: 800,
+            });
+          } else {
+            cameraRef.current?.setCamera({
+              pitch: 0,
+              bearing: 0,
+              animationDuration: 600,
+            });
+          }
+        },
+      );
+    }, [mainViewModel]);
 
     // Cleanup preemption view model on unmount
     useEffect(() => {
@@ -664,6 +742,17 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           </View>
         )}
 
+        {isNavigating && (
+          <TouchableOpacity
+            style={styles.stopNavBtn}
+            onPress={() => mainViewModel?.routeViewModel?.clearRoute()}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="stop-circle" size={20} color="#fff" />
+            <Text style={styles.stopNavText}>End Navigation</Text>
+          </TouchableOpacity>
+        )}
+
         <MapboxGL.MapView
           style={styles.map}
           styleURL={styleURL}
@@ -674,7 +763,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           compassEnabled={false}
           logoEnabled={false}
           attributionEnabled={false}
-          onRegionWillChange={handleRegionWillChange}
+          onRegionIsChanging={handleRegionIsChanging}
         >
           <MapboxGL.Camera
             ref={cameraRef}
@@ -707,6 +796,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           <TIMLayer mainViewModel={mainViewModel} />
 
           <RouteLayer mainViewModel={mainViewModel} />
+          <DestinationMarker mainViewModel={mainViewModel} />
 
           {(mainViewModel?.settingsViewModel?.showLanes ?? true) && (
             <LaneOverlay lanesViewModel={lanesViewModel} />
@@ -807,6 +897,30 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 13,
     fontWeight: '600',
+  },
+  stopNavBtn: {
+    position: 'absolute',
+    bottom: 100,
+    alignSelf: 'center',
+    backgroundColor: '#EF4444',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    borderRadius: 999,
+    zIndex: 2000,
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  stopNavText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   warningContainer: {
     position: "absolute",

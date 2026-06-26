@@ -8,9 +8,17 @@ export const API_CONFIG = {
 
   REDIS_API_URL: 'http://roadaware.cuip.research.utc.edu/cv2x',
   REDIS_SDSM_ENDPOINT: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Georgia',
+  // Bridge running on dev machine (emulator uses 10.0.2.2 to reach host).
+  // For a physical device on the same LAN replace with your machine's IP.
+  // For a device with VPN use: ws://cuip-api.research.utc.edu:8090
+  SDSM_WS_URL: 'ws://10.0.2.2:8091',
 
   REDIS_MAP_ENDPOINT: 'http://10.199.1.11:9095/latest/map_events',
 
   // Dashboard backend (SPaT zones authored in Kepler dashboard)
-  DASHBOARD_API_URL: 'http://10.199.1.41:3001'
+  DASHBOARD_API_URL: 'http://10.199.1.41:3001',
+
+  // Use direct IP to bypass emulator DNS; Host header is set explicitly in fetch calls
+  PREEMPTION_API_URL: 'http://10.199.1.42/preemptapi',
+  PREEMPTION_HOST: 'roadaware.cuip.research.utc.edu',
 };

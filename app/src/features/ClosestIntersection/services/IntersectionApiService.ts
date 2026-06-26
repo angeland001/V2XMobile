@@ -47,7 +47,7 @@ export class IntersectionApiService {
    * Fetch SDSM data from the specified endpoint
    */
   static async fetchSDSMData(url: string): Promise<ApiResponse> {
-    console.log(`Calling SDSM API: ${url}`);
+    // console.log(`Calling SDSM API: ${url}`);
     return this.fetchWithTimeout(url);
   }
   
@@ -55,7 +55,7 @@ export class IntersectionApiService {
    * Fetch SPaT data from the specified endpoint
    */
   static async fetchSPaTData(url: string): Promise<ApiResponse> {
-    console.log(`Calling SPaT API: ${url}`);
+    // console.log(`Calling SPaT API: ${url}`);
     return this.fetchWithTimeout(url);
   }
   

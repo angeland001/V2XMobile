@@ -66,9 +66,9 @@ export class HeadingService {
             this.currentHeading = headingData;
             this.notifyCallbacks(headingData);
 
-            console.log(`🧭 [HeadingService] GPS Heading: ${headingData.heading}° Speed: ${(this.currentSpeed * 3.6).toFixed(1)} km/h`);
+            // console.log(`🧭 [HeadingService] GPS Heading: ${headingData.heading}° Speed: ${(this.currentSpeed * 3.6).toFixed(1)} km/h`);
           } else {
-            console.log('⏸️ [HeadingService] No heading available (user might be stationary)');
+            // console.log('⏸️ [HeadingService] No heading available (user might be stationary)');
           }
         }
       );

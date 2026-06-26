@@ -129,7 +129,7 @@ export class SpatViewModel {
       this.zoneDisplayState.set(zone.id, false);
     }
 
-    console.log(`[SPAT] In zone '${zone.name}'. Polling signal group ${zone.signalGroup}.`);
+    // console.log(`[SPAT] In zone '${zone.name}'. Polling signal group ${zone.signalGroup}.`);
 
     // Start pulling SPaT immediately once user is in-zone.
     this.fetchSpatDataImmediate(zone.intersection, zone.signalGroup);
