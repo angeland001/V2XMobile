@@ -10,8 +10,8 @@ export class IntersectionApiController {
   private static readonly HEADING_TOLERANCE = 45; // degrees
   private static readonly PASSED_THRESHOLD = 10; // meters behind intersection
   private static isMonitoring = false;
-  private static monitoringInterval: NodeJS.Timeout | null = null;
-  private static readonly MONITORING_INTERVAL_MS = 500; // Check every 500ms for responsiveness
+  private static monitoringInterval: ReturnType<typeof setInterval> | null = null;
+  private static readonly MONITORING_INTERVAL_MS = 100; // Check every 100ms for responsiveness
   private static vehicleDisplayViewModel: VehicleDisplayViewModel | null = null;
   private static currentActiveIntersection: string | null = null;
   private static lastKnownPosition: LocationWithHeading | null = null;
@@ -168,8 +168,10 @@ export class IntersectionApiController {
     
     // Start API for new intersection
     if (this.vehicleDisplayViewModel) {
-      const apiEndpoint = intersectionId === 'mlk_georgia' ? 'georgia' : 'houston';
-      this.vehicleDisplayViewModel.start(apiEndpoint);
+      if (intersectionId === 'georgia') {
+        this.vehicleDisplayViewModel.setApiUrl('georgia');
+      }
+      this.vehicleDisplayViewModel.start();
       this.currentActiveIntersection = intersectionId;
     }
   }

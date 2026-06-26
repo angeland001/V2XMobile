@@ -1,4 +1,5 @@
 import { makeAutoObservable, runInAction } from 'mobx';
+import { API_CONFIG } from '../../../core/api/config';
 import type { SpatZone } from '../../SpatService/services/SpatZoneService';
 import { SpatZoneService } from '../../SpatService/services/SpatZoneService';
 import type { PreemptionZoneConfig, SrmPayload, SsmStatus } from '../models/PreemptionModels';
@@ -20,6 +21,7 @@ export class PreemptionViewModel {
   private wasInsideZone = false;
   private validEntry = false;
   private trackedZoneId: string | null = null;
+  private isPendingStart = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private progressInterval: NodeJS.Timeout | null = null;
   private heartbeatCycleStart: number | null = null;
@@ -31,8 +33,14 @@ export class PreemptionViewModel {
   // Config Caching: cache preemption configs by spat_zone_id
   private configCache: Map<string, PreemptionZoneConfig> = new Map();
 
+  private configSyncInterval: NodeJS.Timeout | null = null;
+  private readonly CONFIG_SYNC_INTERVAL_MS = 30_000;
+
   constructor() {
     makeAutoObservable(this);
+    this.configSyncInterval = setInterval(() => {
+      this.syncConfigsWithDashboard();
+    }, this.CONFIG_SYNC_INTERVAL_MS);
   }
 
   toggleEnabled(enabled: boolean): void {
@@ -79,16 +87,24 @@ export class PreemptionViewModel {
       this.zoneDetectionBuffer.every((id) => id === this.zoneDetectionBuffer[0]);
 
     // Zone changed → only reset tracking if debounce confirms the change
-    if (allSamplesMatch && currentZoneId !== this.trackedZoneId) {
+    if (allSamplesMatch && currentZoneId !== (this.trackedZoneId ?? 'none')) {
       console.log(
         `[Preemption] Zone change detected (debounced): ${this.trackedZoneId} → ${currentZoneId}`,
       );
+      const comingFromZone = this.trackedZoneId !== null;
       this.trackedZoneId = currentZone?.id ?? null;
-      this.wasInsideZone = false;
-      this.validEntry = false;
-      this.previousPosition = null;
-      // Clear buffer when zone changes
       this.zoneDetectionBuffer = [];
+
+      if (comingFromZone && currentZone !== undefined) {
+        // Zone-to-zone transition: re-trigger entry detection for new zone.
+        // previousPosition is already inside the new zone so the entry line check
+        // cannot run — allow the start (validEntry = true).
+        this.wasInsideZone = false;
+        this.validEntry = true;
+      }
+      // Outside-to-zone: entry line validation already ran correctly on the first
+      // zone sample. wasInsideZone, validEntry, and previousPosition are correct —
+      // do not override them here.
     }
 
     const isInsideZone = currentZone !== undefined;
@@ -135,7 +151,7 @@ export class PreemptionViewModel {
     }
 
     // Trigger preemption START on valid entry (if toggle is ON and no active session)
-    if (justEntered && this.validEntry && this.isEnabled && !this.sessionId && currentZone) {
+    if (justEntered && this.validEntry && this.isEnabled && !this.sessionId && !this.isPendingStart && currentZone) {
       this.startPreemption(currentZone);
     }
 
@@ -151,39 +167,32 @@ export class PreemptionViewModel {
   // ============ Preemption Lifecycle ============
 
   private async startPreemption(zone: SpatZone): Promise<void> {
-    if (this.sessionId) return;
+    if (this.sessionId || this.isPendingStart) return;
+    this.isPendingStart = true;
 
-    // Check cache first
-    let config = this.configCache.get(zone.id);
+    // Always fetch fresh to detect dashboard deletions
+    console.log('[Preemption] Fetching config from backend for zone:', zone.name);
+    const config = await PreemptionConfigService.fetchConfigBySpatZoneId(zone.id);
+
     if (config) {
-      console.log('[Preemption] Using cached config for zone:', zone.name);
+      this.configCache.set(zone.id, config);
     } else {
-      // Fetch from backend if not in cache
-      console.log('[Preemption] Fetching config from backend for zone:', zone.name);
-      config = await PreemptionConfigService.fetchConfigBySpatZoneId(
-        zone.id,
-      );
-
-      // Store in cache if found
-      if (config) {
-        this.configCache.set(zone.id, config);
-        console.log('[Preemption] Cached config for zone:', zone.name);
-      }
-    }
-
-    // Zone has no preemption config
-    if (!config) {
-      console.log('[Preemption] Zone has no preemption config:', zone.name);
+      this.configCache.delete(zone.id);
+      console.log('[Preemption] Zone has no preemption config (deleted or missing):', zone.name);
+      this.isPendingStart = false;
       return;
     }
 
     if (config.signalGroup === null) {
       console.log('[Preemption] No signal group configured for zone:', zone.name);
+      this.isPendingStart = false;
       return;
     }
 
-    this.ssmStatus = 'requesting';
-    this.activeZoneName = zone.name;
+    runInAction(() => {
+      this.ssmStatus = 'requesting';
+      this.activeZoneName = zone.name;
+    });
 
     console.log('[Preemption] START: Building SRM payload and calling /preempt/start');
 
@@ -199,11 +208,13 @@ export class PreemptionViewModel {
     );
 
     console.log('[Preemption] SRM Payload:', JSON.stringify(srmPayload, null, 2));
+    console.log('[Preemption] Expected controller_ip:', config.controllerIp, '| signalGroup:', config.signalGroup);
 
     // Call START with SRM payload
     console.log('[Preemption] Calling /preempt/start for zone:', zone.name);
     const result = await this.callStart(srmPayload);
     runInAction(() => {
+      this.isPendingStart = false;
       if (result) {
         this.sessionId = result.sessionId;
         this.ssmStatus = result.ssmStatus;
@@ -257,14 +268,11 @@ export class PreemptionViewModel {
   }
 
   private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    if (this.progressInterval) {
-      clearInterval(this.progressInterval);
-      this.progressInterval = null;
-    }
+    if (!this.heartbeatInterval && !this.progressInterval) return;
+    clearInterval(this.heartbeatInterval!);
+    clearInterval(this.progressInterval!);
+    this.heartbeatInterval = null;
+    this.progressInterval = null;
     this.heartbeatCycleStart = null;
     runInAction(() => { this.heartbeatProgress = 0; });
     console.log('[Preemption] Heartbeat stopped');
@@ -298,6 +306,35 @@ export class PreemptionViewModel {
     console.log('[Preemption] Session cleared');
   }
 
+  // ============ Config Sync ============
+
+  private async syncConfigsWithDashboard(): Promise<void> {
+    if (this.configCache.size === 0) return;
+
+    const freshConfigs = await PreemptionConfigService.fetchAllConfigs();
+    if (freshConfigs === null) return; // skip deletion when fetch fails
+    const freshIds = new Set(freshConfigs.map((c) => c.spatZoneId));
+
+    for (const [zoneId] of this.configCache) {
+      if (!freshIds.has(zoneId)) {
+        console.log('[Preemption] Zone config deleted from dashboard:', zoneId);
+        this.configCache.delete(zoneId);
+
+        if (this.trackedZoneId === zoneId && this.sessionId) {
+          console.log('[Preemption] Active zone was deleted — clearing session');
+          runInAction(() => { this.clearSession(); });
+        }
+      }
+    }
+
+    // Refresh any cached configs that are still present
+    for (const config of freshConfigs) {
+      if (this.configCache.has(config.spatZoneId)) {
+        this.configCache.set(config.spatZoneId, config);
+      }
+    }
+  }
+
   // ============ API Calls (Mocks for now) ============
 
   private async callStart(payload: SrmPayload): Promise<{ sessionId: string; ssmStatus: 'granted' | 'cancelled' } | null> {
@@ -308,19 +345,22 @@ export class PreemptionViewModel {
       const result = await RetryService.withFetchRetry(
         async () =>
           fetch(
-            'http://roadaware.cuip.research.utc.edu/preemptapi/preempt/start',
+            `${API_CONFIG.PREEMPTION_API_URL}/preempt/start`,
             {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
+                Host: API_CONFIG.PREEMPTION_HOST,
               },
               body: JSON.stringify({ srm_payload: payload }),
             },
           ),
         async (response) => {
           const data = await response.json();
-          console.log('[API] Response 200:', data);
+          console.log('[API] START | ok:', data.ok, '| detail:', data.detail);
+          console.log('[API] START | controller_ip:', data.controller_ip, '| preempt_channel:', data.preempt_channel, '| current_state:', data.current_state);
+          console.log('[API] START | session_id:', data.session_id, '| ssm:', JSON.stringify(data.ssm));
 
           if (!data.session_id) {
             throw new Error('No session_id in response');
@@ -340,31 +380,26 @@ export class PreemptionViewModel {
   }
 
   private async callHeartbeat(sessionId: string): Promise<boolean> {
-    // Only log occasionally to avoid spam
-    if (Math.random() < 0.1) {
-      console.log('[API] POST /preempt/heartbeat');
-      console.log('[API] Request body:', { session_id: sessionId });
-    }
+    console.log('[API] POST /preempt/heartbeat | session_id:', sessionId);
 
     try {
       await RetryService.withFetchRetry(
         async () =>
           fetch(
-            'http://roadaware.cuip.research.utc.edu/preemptapi/preempt/heartbeat',
+            `${API_CONFIG.PREEMPTION_API_URL}/preempt/heartbeat`,
             {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
+                Host: API_CONFIG.PREEMPTION_HOST,
               },
               body: JSON.stringify({ session_id: sessionId }),
             },
           ),
         async (response) => {
           const data = await response.json();
-          if (Math.random() < 0.1) {
-            console.log('[API] Response 200:', data);
-          }
+          console.log('[API] HB | ok:', data.ok, '| detail:', data.detail, '| preempt_channel:', data.preempt_channel, '| current_state:', data.current_state);
           const status = data?.ssm?.value?.[1]?.status as 'granted' | 'cancelled' | undefined;
           if (status && status !== this.ssmStatus) {
             runInAction(() => { this.ssmStatus = status; });
@@ -376,9 +411,7 @@ export class PreemptionViewModel {
 
       return true;
     } catch (error) {
-      if (Math.random() < 0.1) {
-        console.log('[API] Heartbeat failed after retries:', error);
-      }
+      console.log('[API] Heartbeat failed after retries:', error);
       return false;
     }
   }
@@ -391,19 +424,20 @@ export class PreemptionViewModel {
       await RetryService.withFetchRetry(
         async () =>
           fetch(
-            'http://roadaware.cuip.research.utc.edu/preemptapi/preempt/clear',
+            `${API_CONFIG.PREEMPTION_API_URL}/preempt/clear`,
             {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 Accept: 'application/json',
+                Host: API_CONFIG.PREEMPTION_HOST,
               },
               body: JSON.stringify({ session_id: sessionId }),
             },
           ),
         async (response) => {
           const data = await response.json();
-          console.log('[API] Response 200:', data);
+          console.log('[API] CLEAR | ok:', data.ok, '| detail:', data.detail);
           return true;
         },
         { maxRetries: 2 }, // Clear less critical than START
@@ -415,10 +449,15 @@ export class PreemptionViewModel {
 
   // Cleanup on unmount
   destroy(): void {
+    if (this.configSyncInterval) {
+      clearInterval(this.configSyncInterval);
+      this.configSyncInterval = null;
+    }
     if (this.sessionId) {
       this.clearSession();
     }
     this.stopHeartbeat();
+    this.isPendingStart = false;
     this.zoneDetectionBuffer = [];
     this.configCache.clear();
   }

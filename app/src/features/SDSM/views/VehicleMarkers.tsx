@@ -32,9 +32,9 @@ export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewMod
       <MapboxGL.CircleLayer
         id="vehicles-circles"
         style={{
-          circleRadius: 10,
+          circleRadius: 7,
           circleColor: '#3B82F6',
-          circleStrokeWidth: 3,
+          circleStrokeWidth: 2,
           circleStrokeColor: '#FFFFFF',
         }}
       />

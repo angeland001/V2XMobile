@@ -9,6 +9,8 @@ import {
   StyleSheet,
   ActivityIndicator,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import MapboxGL from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
 import { COLORS } from '../theme';
@@ -60,12 +62,170 @@ function SeverityDots({ value }: { value: number }): React.ReactElement {
   );
 }
 
+// Mapbox expressions: color by the 'category' feature property
+const TIM_FILL_EXPR = [
+  'match', ['get', 'category'],
+  'safety',        'rgba(239,68,68,0.45)',
+  'regulatory',    'rgba(245,158,11,0.45)',
+  'informational', 'rgba(59,130,246,0.45)',
+  'rgba(120,120,120,0.3)',
+] as any;
+
+const TIM_STROKE_EXPR = [
+  'match', ['get', 'category'],
+  'safety',        '#EF4444',
+  'regulatory',    '#F59E0B',
+  'informational', '#3B82F6',
+  '#888888',
+] as any;
+
+const EMPTY_COLLECTION: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features: [] };
+
+const RoutePreviewMap: React.FC<{ routeViewModel: RouteViewModel }> = observer(({ routeViewModel }) => {
+  const [mapReady, setMapReady] = React.useState(false);
+
+  const coords = routeViewModel.routeCoordinates; // [lng, lat][]
+  if (coords.length < 2) return null;
+
+  const lngs = coords.map(c => c[0]);
+  const lats = coords.map(c => c[1]);
+  const bounds = {
+    ne: [Math.max(...lngs), Math.max(...lats)] as [number, number],
+    sw: [Math.min(...lngs), Math.min(...lats)] as [number, number],
+    paddingTop: 28,
+    paddingBottom: 28,
+    paddingLeft: 28,
+    paddingRight: 28,
+  };
+
+  const routeShape: GeoJSON.FeatureCollection<GeoJSON.LineString> = {
+    type: 'FeatureCollection',
+    features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }],
+  };
+
+  const timCollection: GeoJSON.FeatureCollection<GeoJSON.Polygon> =
+    routeViewModel.timHits.length > 0
+      ? {
+          type: 'FeatureCollection',
+          features: routeViewModel.timHits.map(hit => ({
+            type: 'Feature' as const,
+            properties: { category: hit.category },
+            geometry: hit.geometry,
+          })),
+        }
+      : (EMPTY_COLLECTION as GeoJSON.FeatureCollection<GeoJSON.Polygon>);
+
+  return (
+    <View style={previewStyles.container} pointerEvents="none">
+      <MapboxGL.MapView
+        style={previewStyles.map}
+        styleURL={MapboxGL.StyleURL.Street}
+        pitchEnabled={false}
+        rotateEnabled={false}
+        scrollEnabled={false}
+        zoomEnabled={false}
+        compassEnabled={false}
+        logoEnabled={false}
+        attributionEnabled={false}
+        onDidFinishLoadingMap={() => setMapReady(true)}
+      >
+        <MapboxGL.Camera bounds={bounds} animationDuration={0} />
+
+        {/* Only add sources after the map style is fully loaded —
+            sources registered before onDidFinishLoadingMap can silently fail */}
+        {mapReady && (
+          <>
+            {/* TIM fills — below the route line */}
+            <MapboxGL.ShapeSource id="preview-tims-fill-src" shape={timCollection}>
+              <MapboxGL.FillLayer
+                id="preview-tims-fill"
+                style={{ fillColor: TIM_FILL_EXPR, fillOpacity: 1 }}
+              />
+            </MapboxGL.ShapeSource>
+
+            {/* Route line */}
+            <MapboxGL.ShapeSource id="preview-route" shape={routeShape}>
+              <MapboxGL.LineLayer
+                id="preview-route-casing"
+                style={{ lineColor: '#1A1A2E', lineWidth: 2, lineOpacity: 0.2, lineCap: 'round', lineJoin: 'round' }}
+              />
+              <MapboxGL.LineLayer
+                id="preview-route-line"
+                style={{ lineColor: '#FF8C00', lineWidth: 2, lineOpacity: 0.95, lineCap: 'round', lineJoin: 'round' }}
+              />
+            </MapboxGL.ShapeSource>
+
+            {/* TIM borders — above the route line so they're always visible */}
+            <MapboxGL.ShapeSource id="preview-tims-stroke-src" shape={timCollection}>
+              <MapboxGL.LineLayer
+                id="preview-tims-stroke"
+                style={{ lineColor: TIM_STROKE_EXPR, lineWidth: 2, lineOpacity: 1 }}
+              />
+            </MapboxGL.ShapeSource>
+
+            {/* Destination flag */}
+            {routeViewModel.toCoord && (
+              <MapboxGL.PointAnnotation
+                id="preview-destination"
+                coordinate={routeViewModel.toCoord}
+                anchor={{ x: 0.5, y: 1 }}
+              >
+                <View style={previewStyles.destContainer}>
+                  <View style={previewStyles.destFlag}>
+                    <Ionicons name="flag" size={10} color="#fff" />
+                  </View>
+                  <View style={previewStyles.destPole} />
+                </View>
+              </MapboxGL.PointAnnotation>
+            )}
+          </>
+        )}
+      </MapboxGL.MapView>
+    </View>
+  );
+});
+
+const previewStyles = StyleSheet.create({
+  container: {
+    height: 170,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,140,0,0.2)',
+  },
+  map: { flex: 1 },
+  destContainer: { alignItems: 'center' },
+  destFlag: {
+    backgroundColor: '#FF8C00',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.3,
+    shadowRadius: 2,
+    elevation: 3,
+  },
+  destPole: { width: 2, height: 8, backgroundColor: '#FF8C00' },
+});
+
 interface RouteScreenProps {
   routeViewModel: RouteViewModel;
 }
 
 export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewModel }) => {
   const geocodeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const navigation = useNavigation<any>();
+
+  const handleGetRoute = async () => {
+    await routeViewModel.getRoute();
+  };
+
+  const handleStartNavigation = () => {
+    routeViewModel.startNavigation();
+    navigation.navigate('map');
+  };
 
   const handleToChange = (text: string) => {
     routeViewModel.setToText(text);
@@ -144,7 +304,7 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
             <TouchableOpacity
               style={styles.goBtn}
               activeOpacity={0.85}
-              onPress={() => routeViewModel.getRoute()}
+              onPress={handleGetRoute}
               disabled={routeViewModel.isLoadingRoute}
             >
               {routeViewModel.isLoadingRoute ? (
@@ -188,6 +348,8 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
                 <Text style={styles.activeRouteDuration}>{routeViewModel.routeDuration}</Text>
                 <Text style={styles.activeRouteDistance}>{routeViewModel.routeDistance}</Text>
               </View>
+
+              <RoutePreviewMap routeViewModel={routeViewModel} />
 
               {/* TIM zone detail cards */}
               {routeViewModel.timHits.map((hit: TimHit) => {
@@ -262,6 +424,17 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
                   <Ionicons name="checkmark-circle-outline" size={13} color="#22C55E" />
                   <Text style={styles.timClearText}>No TIM or preemption zones on this route</Text>
                 </View>
+              )}
+
+              {!routeViewModel.isNavigating && (
+                <TouchableOpacity
+                  style={styles.startNavBtn}
+                  onPress={handleStartNavigation}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="navigate" size={16} color="#fff" />
+                  <Text style={styles.startNavBtnText}>Start Navigation</Text>
+                </TouchableOpacity>
               )}
             </View>
           )}
@@ -366,6 +539,22 @@ const styles = StyleSheet.create({
   timHitBadgeText:      { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   timClearRow:          { flexDirection: 'row', alignItems: 'center', gap: 5 },
   timClearText:         { fontSize: 12, color: '#22C55E' },
+  startNavBtn: {
+    marginTop: 12,
+    backgroundColor: COLORS.orange,
+    borderRadius: 8,
+    paddingVertical: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    shadowColor: COLORS.orange,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  startNavBtnText: { fontSize: 14, fontWeight: '700', color: COLORS.white, letterSpacing: 0.2 },
   timDetailCard: {
     borderWidth: 1,
     borderRadius: 8,

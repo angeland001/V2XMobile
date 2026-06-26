@@ -5,13 +5,13 @@ import type {
 } from '../models/PreemptionModels';
 
 export class PreemptionConfigService {
-  static async fetchAllConfigs(): Promise<PreemptionZoneConfig[]> {
+  static async fetchAllConfigs(): Promise<PreemptionZoneConfig[] | null> {
     const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/preemption-zone-configs`;
     try {
       const response = await fetch(endpoint, { method: 'GET' });
-      if (!response.ok) return [];
+      if (!response.ok) return null;
       const data = await response.json();
-      if (!Array.isArray(data)) return [];
+      if (!Array.isArray(data)) return null;
       return data
         .filter((d: PreemptionZoneConfigApiResponse) => d?.spat_zone_id != null && d?.intersection_id != null)
         .map((d: PreemptionZoneConfigApiResponse) => ({
@@ -25,7 +25,7 @@ export class PreemptionConfigService {
           status: d.status,
         }));
     } catch {
-      return [];
+      return null;
     }
   }
 

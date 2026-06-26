@@ -34,9 +34,9 @@ export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive,
       <MapboxGL.CircleLayer
         id="vru-circles"
         style={{
-          circleRadius: 9,
+          circleRadius: 6,
           circleColor: '#FF6B35',
-          circleStrokeWidth: 3,
+          circleStrokeWidth: 2,
           circleStrokeColor: '#FFFFFF',
         }}
       />
