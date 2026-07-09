@@ -34,9 +34,13 @@ function formatDistance(miles: number): string {
 interface TimToastProps {
   timService: TimService;
   settingsViewModel: SettingsViewModel;
+  isNavigating?: boolean;
 }
 
-export const TimToast: React.FC<TimToastProps> = observer(({ timService, settingsViewModel }) => {
+// Height of NavigationBanner (status bar + content)
+const NAV_BANNER_HEIGHT = 130;
+
+export const TimToast: React.FC<TimToastProps> = observer(({ timService, settingsViewModel, isNavigating = false }) => {
   const toast = timService.toastQueue[0] ?? null;
   const insets = useSafeAreaInsets();
 
@@ -114,7 +118,12 @@ export const TimToast: React.FC<TimToastProps> = observer(({ timService, setting
     <Animated.View
       style={[
         styles.container,
-        { top: insets.top + 10, opacity, transform: [{ translateY }], borderLeftColor: accentColor },
+        {
+          top: isNavigating ? NAV_BANNER_HEIGHT + 10 : insets.top + 10,
+          opacity,
+          transform: [{ translateY }],
+          borderLeftColor: accentColor,
+        },
       ]}
     >
       <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>

@@ -33,6 +33,8 @@ import { PreemptionViewModel } from "../../../preemption/viewModels/PreemptionVi
 import { SpatZone, SpatZoneService } from "../../../SpatService/services/SpatZoneService";
 import { SignalState } from "../../../SpatService/models/SpatModels";
 import { closeRing, normalizeToLngLat, type LngLat } from "../../../../core/maps/coordinates";
+import { NavigationBanner } from "../../../Route/components/NavigationBanner";
+import { NavigationSummaryBar } from "../../../Route/components/NavigationSummaryBar";
 
 MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
@@ -304,35 +306,61 @@ const DestinationMarker: React.FC<{ mainViewModel: MainViewModel | null | undefi
   const routeVM = mainViewModel?.routeViewModel;
   if (!routeVM?.hasActiveRoute || !routeVM.toCoord) return null;
   return (
-    <MapboxGL.PointAnnotation
-      id="destination-pin"
+    <MapboxGL.MarkerView
       coordinate={routeVM.toCoord}
       anchor={{ x: 0.5, y: 1 }}
     >
       <View style={destPinStyles.container}>
-        <View style={destPinStyles.flag}>
-          <Ionicons name="flag" size={13} color="#fff" />
+        {!!routeVM.toLabel && (
+          <View style={destPinStyles.label}>
+            <Text style={destPinStyles.labelText} numberOfLines={1}>{routeVM.toLabel}</Text>
+          </View>
+        )}
+        <View style={destPinStyles.circle}>
+          <Ionicons name="flag-sharp" size={20} color="#fff" />
         </View>
         <View style={destPinStyles.pole} />
       </View>
-    </MapboxGL.PointAnnotation>
+    </MapboxGL.MarkerView>
   );
 });
 
 const destPinStyles = StyleSheet.create({
   container: { alignItems: 'center' },
-  flag: {
-    backgroundColor: '#FF8C00',
+  label: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
     borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginBottom: 4,
+    maxWidth: 150,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 3,
   },
-  pole: { width: 2, height: 10, backgroundColor: '#FF8C00' },
+  labelText: {
+    color: '#1A1A2E',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  circle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FF8C00',
+    borderWidth: 3,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  pole: { width: 4, height: 18, backgroundColor: '#FF8C00' },
 });
 
 // ---------------------------------------------------------------------------
@@ -344,6 +372,9 @@ const MAPBOX_STYLES = {
   satellite: MapboxGL.StyleURL.SatelliteStreet,
   streets: MapboxGL.StyleURL.Street,
 } as const;
+
+// How far bottom UI elements shift up to clear the NavigationSummaryBar
+const NAV_SUMMARY_OFFSET = 70;
 
 // ---------------------------------------------------------------------------
 // Main MapViewComponent
@@ -396,9 +427,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const [activeSpatZoneId, setActiveSpatZoneId] = useState<string | null>(null);
 
     const [isDarkMode, setIsDarkMode] = useState(false);
-    const [userHeading, setUserHeading] = useState(0);
+    const [navBannerHeight, setNavBannerHeight] = useState(130);
     const userHeadingRef = useRef(0);
     const [isNavigating, setIsNavigating] = useState(false);
+    const [isUserPanningAway, setIsUserPanningAway] = useState(false);
     const zoomLevelRef = useRef(17);
 
     const [mapLayer, setMapLayer] = useState<"outdoors" | "satellite" | "streets">("satellite");
@@ -429,11 +461,19 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const handleLocateUser = () => {
       if (userPosition[0] !== 0 && userPosition[1] !== 0) {
         isFollowingUser.current = true;
-        // userPosition is [lat, lng]; Mapbox centerCoordinate is [lng, lat]
+        setIsUserPanningAway(false);
+        mainViewModel?.routeViewModel?.isOverviewMode &&
+          mainViewModel.routeViewModel.toggleOverviewMode();
+        const navigating = mainViewModel?.routeViewModel?.isNavigating ?? false;
+        const lngLat: [number, number] = [userPosition[1], userPosition[0]];
+        const brg = navigating
+          ? (mainViewModel?.routeViewModel?.getRouteBearing(lngLat) ?? userHeadingRef.current)
+          : 0;
         cameraRef.current?.setCamera({
-          centerCoordinate: [userPosition[1], userPosition[0]],
+          centerCoordinate: lngLat,
           zoomLevel: 17,
           animationDuration: 600,
+          ...(navigating ? { pitch: 45, heading: brg } : { pitch: 0, heading: 0 }),
         });
         zoomLevelRef.current = 17;
       }
@@ -442,6 +482,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const handleRegionIsChanging = (feature: GeoJSON.Feature) => {
       if ((feature.properties as any)?.isUserInteraction) {
         isFollowingUser.current = false;
+        setIsUserPanningAway(true);
       }
     };
 
@@ -484,13 +525,22 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       if (!hasInitialFix.current) {
         hasInitialFix.current = true;
         isFollowingUser.current = true;
+        const navigatingNow = mainViewModel?.routeViewModel?.isNavigating ?? false;
+        const lngLat: [number, number] = [position[1], position[0]];
+        const brg = navigatingNow
+          ? (mainViewModel?.routeViewModel?.getRouteBearing(lngLat) ?? userHeadingRef.current)
+          : undefined;
         cameraRef.current?.setCamera({
-          centerCoordinate: [position[1], position[0]],
-          zoomLevel: 17,
+          centerCoordinate: lngLat,
+          zoomLevel: navigatingNow ? 19 : 17,
           animationDuration: 0,
+          ...(navigatingNow ? { pitch: 45, heading: brg } : {}),
         });
         return;
       }
+
+      // Don't fight the camera while user is in overview mode
+      if (mainViewModel?.routeViewModel?.isOverviewMode) return;
 
       if (!isFollowingUser.current) return;
 
@@ -505,7 +555,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       cameraRef.current?.setCamera({
         centerCoordinate: [position[1], position[0]],
         animationDuration: 0,
-        ...(navigating ? { pitch: 45, bearing: routeBearing } : {}),
+        ...(navigating ? { pitch: 45, heading: routeBearing } : {}),
       });
     };
 
@@ -536,7 +586,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
       if (heading != null && heading >= 0) {
         userHeadingRef.current = heading;
-        setUserHeading(heading);
       }
     };
 
@@ -567,9 +616,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         heading: undefined,
       });
 
-      // Off-route detection on every meaningful GPS update (throttled internally to 200ms)
-      // — far more responsive than the 500ms MainViewModel interval
-      mainViewModel?.routeViewModel?.checkOffRoute([position[1], position[0]]);
+      // Off-route detection + step progress on every meaningful GPS update
+      const lngLat: [number, number] = [position[1], position[0]];
+      mainViewModel?.routeViewModel?.checkOffRoute(lngLat);
+      mainViewModel?.routeViewModel?.updateProgress(lngLat);
     };
 
     // Poll for active spat zones every second
@@ -580,31 +630,113 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       return () => clearInterval(intervalId);
     }, []);
 
-    // React to navigation mode changes from RouteViewModel
+    // React to navigation mode changes
     useEffect(() => {
       const routeVM = mainViewModel?.routeViewModel;
       if (!routeVM) return;
+
+      const applyNavCamera = () => {
+        isFollowingUser.current = true;
+        setIsUserPanningAway(false);
+        const lngLat: [number, number] = [userPositionRef.current[1], userPositionRef.current[0]];
+        if (lngLat[0] === 0 && lngLat[1] === 0) return;
+        const brg = routeVM.getRouteBearing(lngLat) ?? userHeadingRef.current;
+        cameraRef.current?.setCamera({
+          centerCoordinate: lngLat,
+          zoomLevel: 19,
+          pitch: 45,
+          heading: brg,
+          animationDuration: 800,
+        });
+      };
+
+      // Apply immediately if navigation was already active when this effect runs
+      // (e.g. map tab opened after startNavigation() was called from Route tab)
+      if (routeVM.isNavigating) {
+        setIsNavigating(true);
+        applyNavCamera();
+      }
+
       return reaction(
         () => routeVM.isNavigating,
         (navigating) => {
           setIsNavigating(navigating);
           if (navigating) {
+            applyNavCamera();
+          } else {
+            isFollowingUser.current = false;
+            cameraRef.current?.setCamera({ pitch: 0, heading: 0, animationDuration: 600 });
+          }
+        },
+      );
+    }, [mainViewModel]);
+
+    // React to overview mode toggle
+    useEffect(() => {
+      const routeVM = mainViewModel?.routeViewModel;
+      if (!routeVM) return;
+      return reaction(
+        () => routeVM.isOverviewMode,
+        (overview) => {
+          if (overview) {
+            const coords = routeVM.routeCoordinates;
+            if (coords.length < 2) return;
+            const lngs = coords.map(c => c[0]);
+            const lats = coords.map(c => c[1]);
+            cameraRef.current?.fitBounds(
+              [Math.max(...lngs), Math.max(...lats)],
+              [Math.min(...lngs), Math.min(...lats)],
+              [80, 50, 80, 50],
+              900,
+            );
+          } else {
             isFollowingUser.current = true;
             const lngLat: [number, number] = [userPositionRef.current[1], userPositionRef.current[0]];
-            const initialBearing = routeVM.getRouteBearing(lngLat) ?? userHeadingRef.current;
+            const brg = routeVM.getRouteBearing(lngLat) ?? userHeadingRef.current;
             cameraRef.current?.setCamera({
               centerCoordinate: lngLat,
-              zoomLevel: 17,
+              zoomLevel: 19,
               pitch: 45,
-              bearing: initialBearing,
-              animationDuration: 800,
+              heading: brg,
+              animationDuration: 900,
             });
-          } else {
-            cameraRef.current?.setCamera({
-              pitch: 0,
-              bearing: 0,
-              animationDuration: 600,
-            });
+          }
+        },
+      );
+    }, [mainViewModel]);
+
+    // Auto-zoom: smoothly adjust zoom as distance to next maneuver changes
+    useEffect(() => {
+      const routeVM = mainViewModel?.routeViewModel;
+      if (!routeVM) return;
+      let lastAutoZoom = 17;
+      return reaction(
+        () => ({
+          dist: routeVM.distanceToNextManeuver,
+          navigating: routeVM.isNavigating,
+          overview: routeVM.isOverviewMode,
+        }),
+        ({ dist, navigating, overview }) => {
+          if (!navigating || overview || !isFollowingUser.current) return;
+          const target = dist < 80 ? 20.5 : dist < 200 ? 20 : dist < 400 ? 19.5 : 19;
+          if (target !== lastAutoZoom) {
+            lastAutoZoom = target;
+            zoomLevelRef.current = target;
+            cameraRef.current?.setCamera({ zoomLevel: target, animationDuration: 400 });
+          }
+        },
+      );
+    }, [mainViewModel]);
+
+    // React to arrival
+    useEffect(() => {
+      const routeVM = mainViewModel?.routeViewModel;
+      if (!routeVM) return;
+      return reaction(
+        () => routeVM.hasArrived,
+        (arrived) => {
+          if (arrived) {
+            cameraRef.current?.setCamera({ pitch: 0, heading: 0, animationDuration: 800 });
           }
         },
       );
@@ -622,12 +754,27 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       preemptionViewModel.syncPosition(userPosition, spatZones);
     }, [preemptionViewModel, userPosition, spatZones]);
 
+    // Bias zone detection toward zones the planned route actually passes through
+    const routePreemptionHits = mainViewModel?.routeViewModel?.preemptionHits;
+    const routeHasActiveRoute = mainViewModel?.routeViewModel?.hasActiveRoute;
+    useEffect(() => {
+      const preferredZoneIds =
+        routeHasActiveRoute && routePreemptionHits && routePreemptionHits.length > 0
+          ? routePreemptionHits.map((h) => h.zoneId)
+          : [];
+      spatViewModel.setPreferredZoneIds(preferredZoneIds);
+    }, [spatViewModel, routeHasActiveRoute, routePreemptionHits]);
+
     // Track which spat zone the user is currently in
     useEffect(() => {
       if (userPosition[0] === 0 || userPosition[1] === 0) return;
-      const activeZone = SpatZoneService.findZoneForPosition(userPosition);
+      const preferredZoneIds =
+        routeHasActiveRoute && routePreemptionHits && routePreemptionHits.length > 0
+          ? routePreemptionHits.map((h) => h.zoneId)
+          : undefined;
+      const activeZone = SpatZoneService.findZoneForPosition(userPosition, preferredZoneIds);
       setActiveSpatZoneId(activeZone?.id || null);
-    }, [userPosition]);
+    }, [userPosition, routeHasActiveRoute, routePreemptionHits]);
 
     // Location tracking via expo-location (primary)
     useEffect(() => {
@@ -714,26 +861,36 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       testingPedestrianDetectorViewModel?.vrus,
     ]);
 
+    const routeVM = mainViewModel?.routeViewModel;
+
     return (
       <View style={styles.container}>
-        <MapLegend />
+        {/* Navigation overlays — rendered outside the MapboxGL.MapView so they sit on top */}
+        {routeVM && (
+          <NavigationBanner
+            routeViewModel={routeVM}
+            onBannerLayout={setNavBannerHeight}
+          />
+        )}
+
+        <MapLegend navOffset={isNavigating ? navBannerHeight : 0} />
         <ZoomControls
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onLocateUser={handleLocateUser}
+          navOffset={isNavigating ? NAV_SUMMARY_OFFSET : 0}
         />
 
         <PreemptionToggle
           enabled={preemptionViewModel.isEnabled}
-          onToggle={(enabled) => {
-            preemptionViewModel.toggleEnabled(enabled);
-          }}
+          onToggle={(enabled) => { preemptionViewModel.toggleEnabled(enabled); }}
+          navOffset={isNavigating ? navBannerHeight : 0}
         />
         <MapOverlayMenu
           isDarkMode={isDarkMode}
           onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
-          userHeading={userHeading}
           onCycleLayer={cycleMapLayer}
+          navOffset={isNavigating ? navBannerHeight : 0}
         />
 
         {toastMsg !== null && (
@@ -742,14 +899,15 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           </View>
         )}
 
-        {isNavigating && (
+        {/* Recenter button — appears when user pans away during navigation */}
+        {isNavigating && isUserPanningAway && (
           <TouchableOpacity
-            style={styles.stopNavBtn}
-            onPress={() => mainViewModel?.routeViewModel?.clearRoute()}
+            style={styles.recenterBtn}
+            onPress={handleLocateUser}
             activeOpacity={0.85}
           >
-            <Ionicons name="stop-circle" size={20} color="#fff" />
-            <Text style={styles.stopNavText}>End Navigation</Text>
+            <Ionicons name="locate" size={18} color="#fff" />
+            <Text style={styles.recenterText}>Recenter</Text>
           </TouchableOpacity>
         )}
 
@@ -859,18 +1017,35 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         <TrafficLightPanel
           ssmStatus={preemptionViewModel.ssmStatus}
           intersectionName={preemptionViewModel.activeZoneName ?? undefined}
-          progress={preemptionViewModel.heartbeatProgress}
+          heartbeatPulse={preemptionViewModel.heartbeatProgress}
+          durationLabel={spatViewModel.phaseDurationLabel}
+          spatUnavailable={spatViewModel.spatUnavailable}
           activeLight={
             spatViewModel.signalState === SignalState.GREEN ? 'green' :
             spatViewModel.signalState === SignalState.RED ? 'red' :
             spatViewModel.signalState === SignalState.YELLOW ? 'yellow' :
             null
           }
+          navOffset={isNavigating ? NAV_SUMMARY_OFFSET : 0}
         />
 
-        <TurnGuideDisplay spatViewModel={spatViewModel} />
+        <TurnGuideDisplay
+          spatViewModel={spatViewModel}
+          nextManeuverModifier={
+            mainViewModel?.routeViewModel?.isNavigating
+              ? mainViewModel.routeViewModel.currentStep?.maneuverModifier
+              : undefined
+          }
+        />
 
         <PedestrianWarning activeDetector={activeDetector ?? null} />
+
+        {routeVM && (
+          <NavigationSummaryBar
+            routeViewModel={routeVM}
+            onOverviewToggle={() => routeVM.toggleOverviewMode()}
+          />
+        )}
       </View>
     );
   },
@@ -898,33 +1073,32 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
-  stopNavBtn: {
+  recenterBtn: {
     position: 'absolute',
-    bottom: 100,
+    bottom: 160,
     alignSelf: 'center',
-    backgroundColor: '#EF4444',
+    backgroundColor: '#FF8C00',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 20,
-    paddingVertical: 11,
+    gap: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
     borderRadius: 999,
-    zIndex: 2000,
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
+    zIndex: 2500,
+    shadowColor: '#FF8C00',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.45,
     shadowRadius: 8,
     elevation: 6,
   },
-  stopNavText: {
-    color: '#ffffff',
-    fontSize: 14,
+  recenterText: {
+    color: '#fff',
+    fontSize: 13,
     fontWeight: '700',
-    letterSpacing: 0.2,
   },
   warningContainer: {
     position: "absolute",
-    top: 50,
+    top: 110,  // below NavigationBanner when navigating
     left: 20,
     right: 20,
     backgroundColor: "rgba(255, 59, 48, 0.9)",

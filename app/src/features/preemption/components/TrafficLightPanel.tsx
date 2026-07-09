@@ -7,9 +7,13 @@ export type TrafficLightState = 'red' | 'yellow' | 'green' | null;
 interface TrafficLightPanelProps {
   activeLight?: TrafficLightState;
   intersectionName?: string;
-  progress?: number; // 0–1
+  heartbeatPulse?: number; // 0–1, preemption heartbeat cycle (connection health, not phase timing)
   durationLabel?: string;
   ssmStatus?: SsmStatus;
+  navOffset?: number;
+  // True when inside an active zone but no live SPaT data has been matched for
+  // its intersection — shown explicitly instead of silently displaying no light.
+  spatUnavailable?: boolean;
 }
 
 const LIGHTS: {
@@ -50,21 +54,23 @@ const STATUS_CONFIG: Record<
 export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   activeLight = null,
   intersectionName,
-  progress = 0,
+  heartbeatPulse = 0,
   durationLabel = '--',
   ssmStatus = null,
+  navOffset = 0,
+  spatUnavailable = false,
 }) => {
-  const progressAnim = useRef(new Animated.Value(progress)).current;
+  const progressAnim = useRef(new Animated.Value(heartbeatPulse)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
-      toValue: progress,
+      toValue: heartbeatPulse,
       duration: 500,
       useNativeDriver: false,
     }).start();
-  }, [progress]);
+  }, [heartbeatPulse]);
 
   useEffect(() => {
     if (ssmStatus === 'requesting') {
@@ -88,7 +94,7 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   const housingBorderColor = statusConfig?.borderColor ?? '#333';
 
   return (
-    <View style={styles.wrapper}>
+    <View style={[styles.wrapper, { bottom: 100 + navOffset }]}>
       {intersectionName ? (
         <View style={styles.nameBadge}>
           <Text style={styles.nameText} numberOfLines={2}>
@@ -137,20 +143,28 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
 
         <View style={styles.bolt} />
 
-        <View style={styles.progressTrack}>
-          <Animated.View
-            style={[
-              styles.progressFill,
-              {
-                width: progressAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: ['0%', '100%'],
-                }),
-              },
-            ]}
-          />
-        </View>
-        <Text style={styles.durationText}>{durationLabel}</Text>
+        {ssmStatus !== null && (
+          <View style={styles.progressTrack}>
+            <Animated.View
+              style={[
+                styles.progressFill,
+                {
+                  width: progressAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0%', '100%'],
+                  }),
+                },
+              ]}
+            />
+          </View>
+        )}
+        {spatUnavailable ? (
+          <Text style={styles.unavailableText} numberOfLines={2}>
+            SPaT unavailable
+          </Text>
+        ) : (
+          <Text style={styles.durationText}>{durationLabel}</Text>
+        )}
       </View>
     </View>
   );
@@ -159,7 +173,6 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    bottom: 100,
     left: 16,
     alignItems: 'center',
     width: 76,
@@ -235,7 +248,7 @@ const styles = StyleSheet.create({
   },
   progressFill: {
     height: '100%',
-    backgroundColor: '#FF8C00',
+    backgroundColor: '#1a73e8',
     borderRadius: 3,
   },
   durationText: {
@@ -245,6 +258,15 @@ const styles = StyleSheet.create({
     marginTop: 5,
     marginBottom: 2,
     letterSpacing: 0.3,
+  },
+  unavailableText: {
+    color: '#f59e0b',
+    fontSize: 8,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 5,
+    marginBottom: 2,
+    letterSpacing: 0.2,
   },
 });
 

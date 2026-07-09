@@ -3,17 +3,26 @@
 import { makeAutoObservable, runInAction } from 'mobx';
 import { SignalState } from '../models/SpatModels';
 import { SpatApiService } from '../services/SpatApiService';
+import { SpatWebSocketService } from '../services/SpatWebSocketService';
 import { SpatZoneService, SpatZone } from '../services/SpatZoneService';
 
 export class SpatViewModel {
   signalState: SignalState = SignalState.UNKNOWN;
+  currentPhaseTiming: { minS: number; maxS: number } | null = null;
   currentLaneId: number | null = null;
   currentLaneIds: number[] = [];
   currentSignalGroup: number | null = null;
-  currentIntersection: 'georgia' | 'houston' | null = null;
+  currentIntersection: string | null = null;
   currentZoneName: string = '';
   isLoading: boolean = false;
   error: string | null = null;
+  // True only when we have a live, fresh spat-events match for the current
+  // zone's intersection. False (with shouldShowDisplay true) means "inside an
+  // active zone but no SPaT coverage" — surfaced explicitly in the UI rather
+  // than silently showing nothing.
+  spatDataAvailable: boolean = false;
+
+  preferredZoneIds: string[] = [];
 
   private userPosition: [number, number] = [0, 0];
   private previousPosition: [number, number] | null = null;
@@ -29,6 +38,10 @@ export class SpatViewModel {
 
   constructor() {
     makeAutoObservable(this);
+  }
+
+  setPreferredZoneIds(ids: string[]): void {
+    this.preferredZoneIds = ids;
   }
 
   setUserPosition(position: [number, number]): void {
@@ -72,12 +85,14 @@ export class SpatViewModel {
   }
 
   startMonitoring(): void {
+    SpatWebSocketService.ensureConnected();
+
     if (this.updateInterval) return;
 
     this.checkZoneAndUpdateState();
 
     this.updateInterval = setInterval(() => {
-      this.updateSpatData();
+      this.pollSpatData();
     }, this.FAST_UPDATE_INTERVAL);
   }
 
@@ -89,7 +104,7 @@ export class SpatViewModel {
   }
 
   private checkZoneAndUpdateState(): void {
-    const newZone = SpatZoneService.findZoneForPosition(this.userPosition);
+    const newZone = SpatZoneService.findZoneForPosition(this.userPosition, this.preferredZoneIds);
 
     if (newZone?.id !== this.currentZone?.id) {
       this.currentZone = newZone;
@@ -117,22 +132,19 @@ export class SpatViewModel {
     const displayLaneId = this.pickDisplayLaneId(laneIds);
 
     runInAction(() => {
-      this.currentIntersection = zone.intersection;
+      this.currentIntersection = zone.intersectionName;
       this.currentLaneId = displayLaneId;
       this.currentLaneIds = [...laneIds];
       this.currentSignalGroup = zone.signalGroup;
       this.currentZoneName = zone.name;
-      this.error = null;
     });
 
     if (!this.zoneDisplayState.has(zone.id)) {
       this.zoneDisplayState.set(zone.id, false);
     }
 
-    // console.log(`[SPAT] In zone '${zone.name}'. Polling signal group ${zone.signalGroup}.`);
-
-    // Start pulling SPaT immediately once user is in-zone.
-    this.fetchSpatDataImmediate(zone.intersection, zone.signalGroup);
+    // Pull whatever's cached from the live spat-events stream immediately.
+    this.pollSpatData();
   }
 
   private exitZone(): void {
@@ -143,71 +155,61 @@ export class SpatViewModel {
       this.currentSignalGroup = null;
       this.currentZoneName = '';
       this.signalState = SignalState.UNKNOWN;
+      this.currentPhaseTiming = null;
+      this.spatDataAvailable = false;
       this.error = null;
       this.isLoading = false;
     });
   }
 
-  private async updateSpatData(): Promise<void> {
-    if (!this.currentZone || !this.currentSignalGroup || !this.currentIntersection) {
+  // Reads whatever SpatWebSocketService has cached for the current zone's
+  // intersection — no network round-trip, so this is safe to call on every tick.
+  private pollSpatData(): void {
+    if (!this.currentZone || this.currentSignalGroup === null || !this.currentIntersection) {
       return;
     }
 
-    await this.fetchSpatDataImmediate(this.currentIntersection, this.currentSignalGroup);
-  }
+    const spatData = SpatWebSocketService.getLatest(this.currentIntersection);
 
-  private async fetchSpatDataImmediate(
-    intersection: 'georgia' | 'houston',
-    signalGroup: number
-  ): Promise<void> {
-    runInAction(() => {
-      this.isLoading = true;
-    });
-
-    try {
-      // Requested runtime path: use MLK_Georgia feed when in the active zone.
-      const spatData = intersection === 'georgia'
-        ? await SpatApiService.fetchMlkGeorgiaSpatData()
-        : await SpatApiService.fetchSpatData(intersection);
-
-      if (!spatData) {
-        runInAction(() => {
-          this.error = 'No SPaT data';
-          this.signalState = SignalState.UNKNOWN;
-          this.isLoading = false;
-        });
-        return;
-      }
-
-      const signalState = SpatApiService.getSignalStateForGroup(spatData, signalGroup);
-
+    if (!spatData) {
       runInAction(() => {
-        this.signalState = signalState;
-        this.error = null;
-        this.isLoading = false;
-      });
-    } catch (_error) {
-      runInAction(() => {
-        this.error = 'SPaT fetch failed';
         this.signalState = SignalState.UNKNOWN;
-        this.isLoading = false;
+        this.currentPhaseTiming = null;
+        this.spatDataAvailable = false;
+        this.error = 'SPaT data unavailable for this intersection';
       });
+      return;
     }
+
+    const signalState = SpatApiService.getSignalStateForGroup(spatData, this.currentSignalGroup);
+    const phaseTiming = SpatApiService.getPhaseTimingForGroup(spatData, this.currentSignalGroup);
+
+    runInAction(() => {
+      this.signalState = signalState;
+      this.currentPhaseTiming = phaseTiming;
+      this.spatDataAvailable = true;
+      this.error = null;
+    });
   }
 
+  // Whether the turn/light UI should render at all — no longer requires real
+  // signal data, since an active zone with no SPaT coverage should still show
+  // an explicit "unavailable" indicator (see spatUnavailable) rather than
+  // nothing at all.
   get shouldShowDisplay(): boolean {
-    const hasValidData =
-      this.currentZone !== null &&
-      this.currentSignalGroup !== null &&
-      this.signalState !== SignalState.UNKNOWN;
-
-    if (!hasValidData || !this.currentZone) {
+    if (!this.currentZone || this.currentSignalGroup === null) {
       return false;
     }
 
     // Same behavior requirement: only show after crossing entry line,
     // and hide again after crossing exit line.
     return this.zoneDisplayState.get(this.currentZone.id) === true;
+  }
+
+  // True once the user is inside an active zone but no live SPaT data has
+  // matched its intersection — the case the UI must call out explicitly.
+  get spatUnavailable(): boolean {
+    return this.shouldShowDisplay && !this.spatDataAvailable;
   }
 
   get signalStatusText(): string {
@@ -236,13 +238,21 @@ export class SpatViewModel {
     }
   }
 
+  get phaseDurationLabel(): string {
+    if (!this.currentPhaseTiming || this.currentPhaseTiming.maxS <= 0) return '--';
+
+    const lo = Math.round(this.currentPhaseTiming.minS);
+    const hi = Math.round(this.currentPhaseTiming.maxS);
+
+    return lo === hi ? `~${lo}s` : `~${lo}–${hi}s`;
+  }
+
   get laneDisplayText(): string {
     if (this.currentSignalGroup === null || !this.currentIntersection) return '';
 
-    const intersectionPrefix = this.currentIntersection === 'georgia' ? 'GA' : 'HOU';
     const laneText = this.currentLaneIds.length ? `L${this.currentLaneIds.join(',')}` : 'L?';
 
-    return `${intersectionPrefix} ${laneText} SG${this.currentSignalGroup}`;
+    return `${this.currentIntersection} ${laneText} SG${this.currentSignalGroup}`;
   }
 
   cleanup(): void {
@@ -258,6 +268,8 @@ export class SpatViewModel {
       this.currentIntersection = null;
       this.currentZoneName = '';
       this.signalState = SignalState.UNKNOWN;
+      this.currentPhaseTiming = null;
+      this.spatDataAvailable = false;
       this.error = null;
       this.isLoading = false;
     });

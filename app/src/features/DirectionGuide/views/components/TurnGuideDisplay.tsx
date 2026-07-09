@@ -9,6 +9,7 @@ import { SignalState } from '../../../SpatService/models/SpatModels';
 
 interface TurnGuideDisplayProps {
   spatViewModel: SpatViewModel;
+  nextManeuverModifier?: string;
 }
 
 function mapSignalStateToTurnState(signalState: SignalState): TurnSignalState {
@@ -24,9 +25,21 @@ function mapSignalStateToTurnState(signalState: SignalState): TurnSignalState {
   }
 }
 
-export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({ 
-  spatViewModel 
+type ManeuverSlot = 'left' | 'straight' | 'right' | null;
+
+function mapModifierToSlot(modifier?: string): ManeuverSlot {
+  if (!modifier) return null;
+  if (modifier.includes('left')) return 'left';
+  if (modifier.includes('right')) return 'right';
+  if (modifier === 'straight') return 'straight';
+  return null;
+}
+
+export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
+  spatViewModel,
+  nextManeuverModifier,
 }) => {
+  const matchedSlot = mapModifierToSlot(nextManeuverModifier);
   // Record display event - SIMPLIFIED FOR GEORGIA ONLY
   useEffect(() => {
     if (spatViewModel.shouldShowDisplay && 
@@ -43,6 +56,19 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
 
   if (!spatViewModel.shouldShowDisplay) {
     return null;
+  }
+
+  if (spatViewModel.spatUnavailable) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.laneContainer}>
+          <View style={[styles.iconWrapper, styles.unavailableWrapper]}>
+            <Text style={styles.laneLabel}>{spatViewModel.currentZoneName || 'Active Zone'}</Text>
+            <Text style={styles.unavailableText}>SPaT data{'\n'}unavailable</Text>
+          </View>
+        </View>
+      </View>
+    );
   }
 
   const currentLaneId = spatViewModel.currentLaneId;
@@ -63,10 +89,11 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
 
   // Lane 1: Right and Straight with Yield
   if (isGeorgiaLane1) {
+    const isMatch = matchedSlot === 'right' || matchedSlot === 'straight';
     return (
       <View style={styles.container}>
         <View style={styles.laneContainer}>
-          <View style={styles.iconWrapper}>
+          <View style={[styles.iconWrapper, isMatch && styles.matchedContainer]}>
             <Text style={styles.laneLabel}>Right Lane</Text>
             <View style={styles.iconContainer}>
               <TurnIcon 
@@ -87,10 +114,11 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
 
   // Lane 8: Right and Straight (both follow traffic signal)
   if (isGeorgiaLane8) {
+    const isMatch = matchedSlot === 'right' || matchedSlot === 'straight';
     return (
       <View style={styles.container}>
         <View style={styles.laneContainer}>
-          <View style={styles.iconWrapper}>
+          <View style={[styles.iconWrapper, isMatch && styles.matchedContainer]}>
             <Text style={styles.laneLabel}>Right Lane</Text>
             <View style={styles.iconContainer}>
               <TurnIcon 
@@ -110,13 +138,20 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
 
   // Lanes 4 & 5: Left Turn Lane + Left Lane (both follow traffic signal)
   if (isGeorgiaLanes4_5) {
+    const isMatchTurningLane = matchedSlot === 'left';
+    const isMatchLeftLane = matchedSlot === 'straight' || matchedSlot === 'right';
+    const anyMatch = isMatchTurningLane || isMatchLeftLane;
     return (
       <View style={styles.container}>
         <View style={styles.laneContainer}>
-          <View style={styles.iconWrapper}>
+          <View style={[
+            styles.iconWrapper,
+            isMatchTurningLane && styles.matchedContainer,
+            !isMatchTurningLane && anyMatch && styles.dimmedContainer,
+          ]}>
             <Text style={styles.laneLabel}>Turning Lane</Text>
             <View style={styles.iconContainer}>
-              <TurnIcon 
+              <TurnIcon
                 leftTurn={turnState}
                 straightTurn={TurnSignalState.PROHIBITED}
                 rightTurn={TurnSignalState.PROHIBITED}
@@ -130,7 +165,11 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
         </View>
 
         <View style={styles.laneContainer}>
-          <View style={styles.iconWrapper}>
+          <View style={[
+            styles.iconWrapper,
+            isMatchLeftLane && styles.matchedContainer,
+            !isMatchLeftLane && anyMatch && styles.dimmedContainer,
+          ]}>
             <Text style={styles.laneLabel}>Left Lane</Text>
             <View style={styles.iconContainer}>
               <TurnIcon 
@@ -150,11 +189,18 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
 
   // Lanes 10 & 11: Show both lane containers
   if (isGeorgiaLanes10_11) {
+    const isMatchMiddleLane = matchedSlot === 'left' || matchedSlot === 'straight';
+    const isMatchRightLane = matchedSlot === 'straight' || matchedSlot === 'right';
+    const anyMatch = isMatchMiddleLane || isMatchRightLane;
     return (
       <View style={styles.container}>
         {/* Lane 11: Middle Lane - Left and Straight */}
         <View style={styles.laneContainer}>
-          <View style={styles.iconWrapper}>
+          <View style={[
+            styles.iconWrapper,
+            isMatchMiddleLane && styles.matchedContainer,
+            !isMatchMiddleLane && anyMatch && styles.dimmedContainer,
+          ]}>
             <Text style={styles.laneLabel}>Middle Lane</Text>
             <View style={styles.iconContainer}>
               <TurnIcon 
@@ -173,7 +219,11 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
 
         {/* Lane 10: Right Lane - Right Turn and Straight */}
         <View style={styles.laneContainer}>
-          <View style={styles.iconWrapper}>
+          <View style={[
+            styles.iconWrapper,
+            isMatchRightLane && styles.matchedContainer,
+            !isMatchRightLane && anyMatch && styles.dimmedContainer,
+          ]}>
             <Text style={styles.laneLabel}>Right Lane</Text>
             <View style={styles.iconContainer}>
               <TurnIcon 
@@ -193,10 +243,11 @@ export const TurnGuideDisplay: React.FC<TurnGuideDisplayProps> = observer(({
     );
   }
 
+  const isMatchFallback = matchedSlot === 'straight';
   return (
     <View style={styles.container}>
       <View style={styles.laneContainer}>
-        <View style={styles.iconWrapper}>
+        <View style={[styles.iconWrapper, isMatchFallback && styles.matchedContainer]}>
           <Text style={styles.laneLabel}>{spatViewModel.currentZoneName || 'Active Zone'}</Text>
           <View style={styles.iconContainer}>
             <TurnIcon
@@ -290,6 +341,24 @@ const styles = StyleSheet.create({
   yieldDot: {
     backgroundColor: '#f59e0b',
     shadowColor: '#f59e0b',
+  },
+  matchedContainer: {
+    borderWidth: 2,
+    borderColor: '#1a73e8',
+  },
+  dimmedContainer: {
+    opacity: 0.45,
+  },
+  unavailableWrapper: {
+    borderWidth: 1.5,
+    borderColor: '#f59e0b',
+  },
+  unavailableText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#f59e0b',
+    textAlign: 'center',
+    marginTop: 4,
   },
 });
 
