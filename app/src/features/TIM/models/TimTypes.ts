@@ -45,4 +45,16 @@ export function timCategoryFromType(tim_type: string): TimCategory {
   return category ?? 'informational';
 }
 
+export interface TimHit {
+  timId: number;
+  timType: string;
+  category: TimCategory;
+  severity: number;
+  description: string | null;
+  itisCodes: number[];
+  validFrom: string | null;
+  validUntil: string | null;
+  geometry: { type: 'Polygon'; coordinates: number[][][] };
+}
+
 export default timCategoryFromType;

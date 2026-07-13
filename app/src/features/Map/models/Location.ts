@@ -3,6 +3,7 @@ export interface Coordinate {
   longitude: number;
   latitude: number;
   heading?: number; // Add optional heading property
+  speed?: number; // GPS ground speed in meters/second
 }
 
 export const toGeoJSONCoordinate = (coord: Coordinate): [number, number] => {

@@ -4,11 +4,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 interface PreemptionToggleProps {
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
+  navOffset?: number;
 }
 
-export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onToggle }) => {
+export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onToggle, navOffset = 0 }) => {
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { top: 30 + navOffset }]}>
       <Text style={styles.label}>Auto Preemption</Text>
       <Pressable
         style={[styles.toggle, enabled ? styles.toggleOn : styles.toggleOff]}
@@ -23,8 +24,7 @@ export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onT
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 184,
-    right: 16,
+    left: 26,
     zIndex: 1200,
     alignItems: 'center',
     gap: 8,

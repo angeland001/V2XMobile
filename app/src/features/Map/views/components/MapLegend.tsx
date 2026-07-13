@@ -2,9 +2,13 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-export const MapLegend: React.FC = () => {
+interface MapLegendProps {
+  navOffset?: number;
+}
+
+export const MapLegend: React.FC<MapLegendProps> = ({ navOffset = 0 }) => {
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { top: 16 + navOffset }]}>
       <View style={styles.legendItem}>
         <View style={styles.vehicleIcon}>
           <View style={styles.vehicleIconInner} />
@@ -25,30 +29,31 @@ export const MapLegend: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: 16,
     right: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
-    paddingVertical: 5,
-    paddingHorizontal: 8,
-    borderRadius: 6,
-    elevation: 1,
+    backgroundColor: 'rgba(18, 18, 28, 0.92)',
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    elevation: 6,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
     borderWidth: 1,
-    borderColor: 'rgba(0, 0, 0, 0.06)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderLeftWidth: 3,
+    borderLeftColor: '#FF8C00',
     zIndex: 1000,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: 2,
+    marginVertical: 3,
   },
   legendText: {
     fontSize: 10,
-    color: '#6B7280',
-    fontWeight: '400',
+    color: '#E2E8F0',
+    fontWeight: '500',
     marginLeft: 6,
   },
   vehicleIcon: {

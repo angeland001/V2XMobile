@@ -6,13 +6,12 @@ import {
   booleanPointInPolygon,
   bearing,
   centroid,
-  bbox,
   distance,
 } from '@turf/turf';
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
 import { API_CONFIG } from '../../../core/api/config';
 import { normalizeToLngLat } from '../../../core/maps/coordinates';
-import { TimMessage, timCategoryFromType } from '../models/TimTypes';
+import { TimMessage, TimHit, timCategoryFromType } from '../models/TimTypes';
 
 export interface TimToastItem {
   id: string;
@@ -46,7 +45,7 @@ export class TimService {
 
   private pollInterval: NodeJS.Timeout | null = null;
   private bufferedCache = new Map<number, Feature<Polygon | MultiPolygon>>();
-  private inBufferIds = new Set<number>();
+  private alertedIds = new Set<number>();
 
   constructor() {
     makeObservable(this, {
@@ -74,7 +73,7 @@ export class TimService {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
-    this.inBufferIds.clear();
+    this.alertedIds.clear();
     this.bufferedCache.clear();
     runInAction(() => {
       this.activeTims = [];
@@ -91,6 +90,8 @@ export class TimService {
     this.unreadAlertCount = 0;
   }
 
+  // Ambient (non-navigating) proximity check: a zone only alerts once, while the
+  // user is within its buffer AND actually heading toward it — not on buffer entry alone.
   checkProximity(latitude: number, longitude: number, heading: number | null): void {
     if (!this.activeTims.length) return;
 
@@ -113,19 +114,20 @@ export class TimService {
 
       if (inBuffer) {
         nowInBuffer.add(tim.id);
-        if (!this.inBufferIds.has(tim.id)) {
+        if (!this.alertedIds.has(tim.id)) {
           const shouldAlert =
-            heading === null ||
-            !this.isCorridorZone(tim) ||
-            this.isHeadingTowardZone(latitude, longitude, tim, heading);
+            heading === null || this.isHeadingTowardZone(latitude, longitude, tim, heading);
           if (shouldAlert) {
+            this.alertedIds.add(tim.id);
             this.triggerAlert(tim);
           }
         }
+      } else {
+        // Left the buffer — allow this zone to alert again on a future approach.
+        this.alertedIds.delete(tim.id);
       }
     }
 
-    this.inBufferIds = nowInBuffer;
     this.timDistances = newDistances;
   }
 
@@ -176,48 +178,61 @@ export class TimService {
   }
 
   private triggerAlert(tim: TimMessage): void {
-    const message = tim.description ?? `${tim.tim_type} ahead`;
-    const id = `${tim.id}-${Date.now()}`;
-
-    runInAction(() => {
-      this.alertLog.unshift({
-        id,
-        category: tim.category,
-        message,
-        timestamp: Date.now(),
+    this.pushAlert(
+      {
         timId: tim.id,
-        severity: tim.severity,
         timType: tim.tim_type,
+        category: tim.category,
+        severity: tim.severity,
+        description: tim.description,
         itisCodes: tim.itis_codes,
         validFrom: tim.valid_from,
         validUntil: tim.valid_until,
         geometry: tim.geometry,
+      },
+      { toast: true },
+    );
+  }
+
+  // Called by RouteViewModel when the active navigation route crosses a TIM zone
+  // and the user has come within its heads-up lookahead distance. Only logs the
+  // alert — the persistent nav UI is driven by RouteViewModel.approachingTimZones,
+  // not the ephemeral toast queue.
+  triggerRouteAlert(hit: TimHit): void {
+    this.pushAlert(hit, { toast: false });
+  }
+
+  private pushAlert(hit: TimHit, opts: { toast: boolean }): void {
+    const message = hit.description ?? `${hit.timType} ahead`;
+    const id = `${hit.timId}-${Date.now()}`;
+
+    runInAction(() => {
+      this.alertLog.unshift({
+        id,
+        category: hit.category,
+        message,
+        timestamp: Date.now(),
+        timId: hit.timId,
+        severity: hit.severity,
+        timType: hit.timType,
+        itisCodes: hit.itisCodes,
+        validFrom: hit.validFrom,
+        validUntil: hit.validUntil,
+        geometry: hit.geometry,
       });
       this.unreadAlertCount += 1;
 
-      this.toastQueue.push({
-        id,
-        category: tim.category,
-        message,
-        timestamp: Date.now(),
-        timId: tim.id,
-        severity: tim.severity,
-      });
+      if (opts.toast) {
+        this.toastQueue.push({
+          id,
+          category: hit.category,
+          message,
+          timestamp: Date.now(),
+          timId: hit.timId,
+          severity: hit.severity,
+        });
+      }
     });
-  }
-
-  private isCorridorZone(tim: TimMessage): boolean {
-    try {
-      const poly = polygon(tim.geometry.coordinates);
-      const [minLng, minLat, maxLng, maxLat] = bbox(poly);
-      const lngSpan = Math.abs(maxLng - minLng);
-      const latSpan = Math.abs(maxLat - minLat);
-      const minSpan = Math.min(lngSpan, latSpan);
-      if (minSpan === 0) return false;
-      return Math.max(lngSpan, latSpan) / minSpan > 1.5;
-    } catch {
-      return false;
-    }
   }
 
   private isHeadingTowardZone(

@@ -6,15 +6,17 @@ interface ZoomControlsProps {
   onZoomIn: () => void;
   onZoomOut: () => void;
   onLocateUser: () => void;
+  navOffset?: number;
 }
 
 export const ZoomControls: React.FC<ZoomControlsProps> = ({
   onZoomIn,
   onZoomOut,
   onLocateUser,
+  navOffset = 0,
 }) => {
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { bottom: 110 + navOffset }]}>
       {/* Zoom In */}
       <TouchableOpacity style={styles.grayButton} onPress={onZoomIn} activeOpacity={0.75}>
         <Ionicons name="add" size={22} color="#FFFFFF" />
@@ -41,7 +43,6 @@ const styles = StyleSheet.create({
   container: {
     position: "absolute",
     right: 16,
-    bottom: 110,
     zIndex: 100,
     alignItems: "center",
   },

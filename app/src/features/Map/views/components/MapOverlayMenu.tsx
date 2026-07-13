@@ -2,49 +2,33 @@ import React from "react";
 import { View, StyleSheet } from "react-native";
 import { DarkModeButton } from "./mapoverlay/DarkModeButton";
 import { LayersButton } from "./mapoverlay/LayersButton";
-import { Compass } from "./mapoverlay/Compass";
 
 interface MapOverlayMenuProps {
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
-  userHeading: number;
   onCycleLayer: () => void;
+  navOffset?: number;
 }
 
 export const MapOverlayMenu: React.FC<MapOverlayMenuProps> = ({
   isDarkMode,
   onToggleDarkMode,
-  userHeading,
   onCycleLayer,
+  navOffset = 0,
 }) => {
   return (
-    <>
-      {/* Top-left: Compass */}
-      <View style={styles.topLeft}>
-        <Compass heading={userHeading} />
-      </View>
-
-      {/* Top-right: stacked buttons */}
-      <View style={styles.topRight}>
-        <DarkModeButton isDarkMode={isDarkMode} onToggle={onToggleDarkMode} />
-        <View style={styles.buttonGap} />
-        <LayersButton onPress={onCycleLayer} />
-      </View>
-    </>
+    <View style={[styles.topRight, { top: 80 + navOffset }]}>
+      <DarkModeButton isDarkMode={isDarkMode} onToggle={onToggleDarkMode} />
+      <View style={styles.buttonGap} />
+      <LayersButton onPress={onCycleLayer} />
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
-  topLeft: {
-    position: "absolute",
-    left: 26,
-    top: 80,
-    zIndex: 100,
-  },
   topRight: {
     position: "absolute",
     right: 16,
-    top: 80,
     zIndex: 100,
   },
   buttonGap: {

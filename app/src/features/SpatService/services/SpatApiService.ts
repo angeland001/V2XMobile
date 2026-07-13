@@ -1,70 +1,14 @@
 // app/src/features/SpatService/services/SpatApiService.ts
+//
+// Pure parsing utilities over a raw SPaT payload (regardless of transport —
+// currently sourced from SpatWebSocketService's cache of the spat-events
+// stream). No network calls live here; see spat_bridge.py + SpatWebSocketService
+// for how live data actually reaches the app.
 
 import { SignalState } from '../models/SpatModels';
 
-export interface SpatApiResponse {
-  phaseStatusGroupReds: number[];
-  phaseStatusGroupYellows: number[];
-  phaseStatusGroupGreens: number[];
-  timestamp: number;
-  [key: string]: any;
-}
-
 export class SpatApiService {
-  private static readonly ENDPOINTS = {
-    georgia: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/mlk_spat_events/MLK_Georgia',
-    houston: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/mlk_spat_events/MLK_Houston',
-  };
-
-  private static readonly FAST_TIMEOUT = 1000;
-  private static readonly CACHE_DURATION = 200;
-  private static cache: Map<string, { data: SpatApiResponse; timestamp: number }> = new Map();
-
-  static async fetchMlkGeorgiaSpatData(): Promise<SpatApiResponse | null> {
-    return this.fetchSpatDataByUrl(this.ENDPOINTS.georgia, 'mlk_georgia');
-  }
-
-  static async fetchSpatData(intersection: 'georgia' | 'houston'): Promise<SpatApiResponse | null> {
-    return this.fetchSpatDataByUrl(this.ENDPOINTS[intersection], intersection);
-  }
-
-  private static async fetchSpatDataByUrl(url: string, cacheKey: string): Promise<SpatApiResponse | null> {
-    const cached = this.cache.get(cacheKey);
-    const now = Date.now();
-
-    if (cached && now - cached.timestamp < this.CACHE_DURATION) {
-      return cached.data;
-    }
-
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.FAST_TIMEOUT);
-
-      const response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal,
-        headers: {
-          Accept: 'application/json',
-          'Cache-Control': 'no-cache',
-        },
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const data = await response.json();
-      this.cache.set(cacheKey, { data, timestamp: now });
-
-      return data;
-    } catch (_error) {
-      return null;
-    }
-  }
-
-  static getSignalStateForGroup(spatData: SpatApiResponse, signalGroup: number): SignalState {
+  static getSignalStateForGroup(spatData: Record<string, any>, signalGroup: number): SignalState {
     if (!spatData) return SignalState.UNKNOWN;
 
     if (spatData.phaseStatusGroupGreens?.includes(signalGroup)) {
@@ -82,8 +26,22 @@ export class SpatApiService {
     return SignalState.UNKNOWN;
   }
 
-  static clearCache(): void {
-    this.cache.clear();
+  // Unit assumption (seconds) is unverified against the live feed — if field-testing
+  // shows values ~10x too large, the source data is likely deciseconds (SAE J2735
+  // convention) and needs a /10 divisor here.
+  static getPhaseTimingForGroup(
+    spatData: Record<string, any>,
+    signalGroup: number,
+  ): { minS: number; maxS: number } | null {
+    if (!spatData) return null;
+
+    const minRaw = spatData[`spatVehMinTimeToChange${signalGroup}`];
+    const maxRaw = spatData[`spatVehMaxTimeToChange${signalGroup}`];
+
+    if (typeof minRaw !== 'number' || typeof maxRaw !== 'number') return null;
+    if (maxRaw <= 0) return null;
+
+    return { minS: minRaw, maxS: maxRaw };
   }
 }
 

@@ -8,7 +8,14 @@ export interface SpatZone {
   polygon: [number, number][];
   laneIds: number[];
   signalGroup: number;
-  intersection: 'georgia' | 'houston';
+  // The intersection this zone belongs to, used to look up live SPaT data via
+  // SpatWebSocketService's fuzzy match against the spat-events stream (which
+  // covers all CUIP-instrumented corridor intersections, not just two). null
+  // only when the zone has no name to key off of at all — a resolved name that
+  // simply never matches live traffic (e.g. a bench/lab test controller) is
+  // expected and surfaces as "SPaT unavailable" rather than borrowing another
+  // intersection's feed.
+  intersectionName: string | null;
   entryLine?: [number, number][]; // Line user crosses to enter zone
   exitLine?: [number, number][]; // Line user crosses to exit zone
 }
@@ -22,6 +29,10 @@ interface DashboardSpatZoneApiResponse {
   polygon: { type: 'Polygon'; coordinates: [number, number][][] };
   entry_line: { type: 'LineString'; coordinates: [number, number][] };
   exit_line: { type: 'LineString'; coordinates: [number, number][] };
+  // Not confirmed present on this endpoint (only observed on the separate
+  // preemption-zone-configs endpoint so far) — used when available, since it's
+  // a more reliable intersection identity than the zone's own approach name.
+  intersection_name?: string;
 }
 
 export const SPAT_ZONES: SpatZone[] = [
@@ -37,7 +48,7 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [4, 5],
     signalGroup: 2,
-    intersection: 'georgia',
+    intersectionName: 'Georgia',
     entryLine: [
       [35.045701327254704, -85.3078772725392],
       [35.04564597038842, -85.30798530743753]
@@ -59,7 +70,7 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [1],
     signalGroup: 4,
-    intersection: 'georgia',
+    intersectionName: 'Georgia',
     entryLine: [
       [35.045932689327415, -85.30813483909343],
       [35.04595040716744, -85.30823562301588]
@@ -81,7 +92,7 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [8],
     signalGroup: 4,
-    intersection: 'georgia',
+    intersectionName: 'Georgia',
     entryLine: [
       [35.04574351301403, -85.30833844397954],
       [35.045712107167205, -85.30826329917411]
@@ -103,7 +114,7 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [10, 11],
     signalGroup: 2,
-    intersection: 'georgia',
+    intersectionName: 'Georgia',
     entryLine: [
       [35.04586380929149, -85.30890288513018],
       [35.04566781438929, -85.30887736136788]
@@ -124,8 +135,16 @@ export class SpatZoneService {
     return [coord[1], coord[0]];
   }
 
-  private static inferIntersection(name: string): 'georgia' | 'houston' {
-    return name.toLowerCase().includes('houston') ? 'houston' : 'georgia';
+  // Prefer the dashboard's own intersection name when present — it's a more
+  // reliable identity than the zone's approach name (e.g. "E 11th St - EB
+  // Approach" tells you nothing about which physical intersection it's at).
+  // Whatever comes out of this is a fuzzy-match key for SpatWebSocketService,
+  // not a guess at a specific known intersection — no live match is expected
+  // and correct for zones that aren't part of the CUIP-instrumented corridor.
+  private static resolveIntersectionName(z: DashboardSpatZoneApiResponse): string | null {
+    if (z.intersection_name && z.intersection_name.trim()) return z.intersection_name.trim();
+    if (z.name && z.name.trim()) return z.name.trim();
+    return null;
   }
 
   static async loadZonesFromDashboard(): Promise<void> {
@@ -151,7 +170,7 @@ export class SpatZoneService {
           polygon: z.polygon.coordinates[0],
           laneIds: Array.isArray(z.lane_ids) ? z.lane_ids : [],
           signalGroup: z.signal_group,
-          intersection: this.inferIntersection(z.name),
+          intersectionName: this.resolveIntersectionName(z),
           entryLine: z.entry_line.coordinates.map((c) => this.toLatLng(c as [number, number])) as [number, number][],
           exitLine: z.exit_line.coordinates.map((c) => this.toLatLng(c as [number, number])) as [number, number][],
         }));
@@ -167,12 +186,31 @@ export class SpatZoneService {
   }
 
 
-  static findZoneForPosition(userPosition: [number, number]): SpatZone | null {
+  static findZoneForPosition(
+    userPosition: [number, number],
+    preferredZoneIds?: string[],
+  ): SpatZone | null {
     if (!userPosition || userPosition[0] === 0 || userPosition[1] === 0) {
       return null;
     }
 
-    for (const zone of this.getActiveZones()) {
+    const zones = this.getActiveZones();
+
+    if (preferredZoneIds && preferredZoneIds.length > 0) {
+      const preferredSet = new Set(preferredZoneIds);
+      const ordered = [
+        ...zones.filter((z) => preferredSet.has(z.id)),
+        ...zones.filter((z) => !preferredSet.has(z.id)),
+      ];
+      for (const zone of ordered) {
+        if (this.isPointInZone(userPosition, zone)) {
+          return zone;
+        }
+      }
+      return null;
+    }
+
+    for (const zone of zones) {
       if (this.isPointInZone(userPosition, zone)) {
         return zone;
       }
