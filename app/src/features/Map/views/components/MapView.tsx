@@ -429,6 +429,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [navBannerHeight, setNavBannerHeight] = useState(130);
     const userHeadingRef = useRef(0);
+    const userSpeedRef = useRef<number | null>(null);
     const [isNavigating, setIsNavigating] = useState(false);
     const [isUserPanningAway, setIsUserPanningAway] = useState(false);
     const zoomLevelRef = useRef(17);
@@ -563,10 +564,15 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       latitude: number,
       longitude: number,
       heading?: number | null,
+      speed?: number | null,
     ) => {
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
 
       const newPosition: [number, number] = [latitude, longitude];
+
+      if (speed != null && speed >= 0) {
+        userSpeedRef.current = speed;
+      }
 
       // Camera: full 20 Hz, never triggers a React re-render
       updateCameraPosition(newPosition);
@@ -590,16 +596,16 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     };
 
     const handleLocationUpdate = (location: Location.LocationObject) => {
-      const { latitude, longitude, heading } = location.coords;
-      handlePositionUpdate(latitude, longitude, heading);
+      const { latitude, longitude, heading, speed } = location.coords;
+      handlePositionUpdate(latitude, longitude, heading, speed);
     };
 
     // Mapbox UserLocation callback — serves the same role as onUserLocationChange
     // in react-native-maps (fallback for Android emulator GPS updates)
     const handleMapboxLocationUpdate = (location: MapboxGL.Location) => {
-      const { latitude, longitude, heading } = location.coords;
+      const { latitude, longitude, heading, speed } = location.coords;
       if (!latitude || !longitude) return;
-      handlePositionUpdate(latitude, longitude, heading ?? null);
+      handlePositionUpdate(latitude, longitude, heading ?? null, speed ?? null);
     };
 
     const updateAllViewModels = (position: [number, number]) => {
@@ -614,6 +620,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         latitude: position[0],
         longitude: position[1],
         heading: undefined,
+        speed: userSpeedRef.current ?? undefined,
       });
 
       // Off-route detection + step progress on every meaningful GPS update

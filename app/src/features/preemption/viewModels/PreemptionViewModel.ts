@@ -95,12 +95,34 @@ export class PreemptionViewModel {
       this.trackedZoneId = currentZone?.id ?? null;
       this.zoneDetectionBuffer = [];
 
+      if (comingFromZone) {
+        // Leaving the old zone must clear its session regardless of whether the
+        // new zone turns out to be a valid entry — justExited can't fire below
+        // since isInsideZone stays true across a direct zone-to-zone hop.
+        this.onZoneExit();
+      }
+
       if (comingFromZone && currentZone !== undefined) {
-        // Zone-to-zone transition: re-trigger entry detection for new zone.
-        // previousPosition is already inside the new zone so the entry line check
-        // cannot run — allow the start (validEntry = true).
+        // Zone-to-zone transition: re-trigger entry detection for new zone,
+        // but still validate direction against the new zone's own entry/exit
+        // line rather than assuming every hop is a legitimate approach.
         this.wasInsideZone = false;
-        this.validEntry = true;
+        const previousPosition = this.previousPosition;
+        if (previousPosition) {
+          const crossedEntry = SpatZoneService.crossesEntryLine(
+            previousPosition,
+            currentPosition,
+            currentZone,
+          );
+          const crossedExit = SpatZoneService.crossesExitLine(
+            previousPosition,
+            currentPosition,
+            currentZone,
+          );
+          this.validEntry = crossedEntry && !crossedExit;
+        } else {
+          this.validEntry = false;
+        }
       }
       // Outside-to-zone: entry line validation already ran correctly on the first
       // zone sample. wasInsideZone, validEntry, and previousPosition are correct —

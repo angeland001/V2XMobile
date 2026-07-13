@@ -102,8 +102,14 @@ export class MainViewModel {
           const { latitude, longitude } = this.userLocation;
           if (latitude !== 0 && longitude !== 0) {
             this.spatViewModel.setUserPosition([latitude, longitude]);
-            const heading = this.mapViewModel.headingValid ? this.mapViewModel.userHeading : null;
-            this.timService.checkProximity(latitude, longitude, heading);
+            if (!this.routeViewModel.isNavigating && this.mapViewModel.isMoving) {
+              // While navigating, RouteViewModel alerts only for zones the route
+              // actually crosses (see RouteViewModel.checkTimZoneAlerts). While
+              // stationary, skip ambient checks entirely — a parked/idle phone's
+              // compass heading is meaningless as a direction of travel.
+              const heading = this.mapViewModel.headingValid ? this.mapViewModel.userHeading : null;
+              this.timService.checkProximity(latitude, longitude, heading);
+            }
             this.routeViewModel.setUserLocation([longitude, latitude]);
           }
         }, 500);

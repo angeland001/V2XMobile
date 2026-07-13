@@ -2,18 +2,23 @@ import { makeAutoObservable, reaction, runInAction } from 'mobx';
 import {
   lineString,
   booleanIntersects,
+  booleanPointInPolygon,
   polygon,
   point,
   nearestPointOnLine,
+  pointToLineDistance,
+  polygonToLine,
   bearing,
   distance as turfDistance,
 } from '@turf/turf';
-import type { Feature, LineString } from 'geojson';
+import type { Feature, LineString, Point } from 'geojson';
 import { TimService } from '../../TIM/services/TimService';
-import { TimCategory } from '../../TIM/models/TimTypes';
+import { TimHit } from '../../TIM/models/TimTypes';
 import { SpatZoneService } from '../../SpatService/services/SpatZoneService';
 import { PreemptionConfigService } from '../../preemption/services/PreemptionConfigService';
 import { VoiceGuidanceService } from '../services/VoiceGuidanceService';
+
+export type { TimHit };
 
 export interface GeocodingSuggestion {
   id: string;
@@ -31,18 +36,6 @@ export interface RouteStep {
   coordinate: [number, number]; // [lng, lat] at step start
 }
 
-export interface TimHit {
-  timId: number;
-  timType: string;
-  category: TimCategory;
-  severity: number;
-  description: string | null;
-  itisCodes: number[];
-  validFrom: string | null;
-  validUntil: string | null;
-  geometry: { type: 'Polygon'; coordinates: number[][][] };
-}
-
 export interface PreemptionHit {
   zoneId: string;
   zoneName: string;
@@ -52,6 +45,7 @@ const CHATT_PROXIMITY = '-85.3099,35.0456';
 const OFF_ROUTE_THRESHOLD_M = 30;
 const REROUTE_DEBOUNCE_MS = 2_500;
 const OFF_ROUTE_CHECK_INTERVAL_MS = 200;
+const TIM_ALERT_LOOKAHEAD_M = 500;
 
 // Distance thresholds (meters) at which to speak voice instructions
 const VOICE_THRESHOLDS = [
@@ -92,11 +86,16 @@ export class RouteViewModel {
   // ── V2X analysis ──────────────────────────────────────────────────────────
   timHits: TimHit[] = [];
   preemptionHits: PreemptionHit[] = [];
+  // Zones on the active route within TIM_ALERT_LOOKAHEAD_M that haven't been
+  // entered yet — drives the persistent (non-dismissing) nav alert UI.
+  approachingTimZones: TimHit[] = [];
+  approachingTimZoneDistancesM: Map<number, number> = new Map();
 
   // ── Internal (non-observable) ─────────────────────────────────────────────
   private lastRerouteTime: number = 0;
   private lastOffRouteCheck: number = 0;
   private _announcedKeys: Set<string> = new Set();
+  private _alertedTimIds: Set<number> = new Set();
 
   constructor(private timService: TimService) {
     makeAutoObservable(this);
@@ -236,9 +235,12 @@ export class RouteViewModel {
     this.hasArrived = false;
     this.isOverviewMode = false;
     this._announcedKeys.clear();
+    this._alertedTimIds.clear();
     // V2X
     this.timHits = [];
     this.preemptionHits = [];
+    this.approachingTimZones = [];
+    this.approachingTimZoneDistancesM = new Map();
   }
 
   startNavigation(): void {
@@ -263,6 +265,8 @@ export class RouteViewModel {
 
     try {
       const userPt = point(userLngLat);
+
+      if (this.isNavigating) this.checkTimZoneAlerts(userPt);
 
       // Arrival: direct distance to destination — reliable regardless of step count/distances
       if (this.toCoord) {
@@ -440,6 +444,7 @@ export class RouteViewModel {
       }
 
       this._announcedKeys.clear();
+      this._alertedTimIds.clear();
 
       runInAction(() => {
         this.routeCoordinates = coordinates;
@@ -455,6 +460,8 @@ export class RouteViewModel {
         this.remainingDistanceM = route.distance;
         this.remainingDurationS = route.duration;
         this.isOverviewMode = false;
+        this.approachingTimZones = [];
+        this.approachingTimZoneDistancesM = new Map();
       });
 
       this.analyzeTimIntersections();
@@ -530,6 +537,41 @@ export class RouteViewModel {
     } catch {
       // Silent
     }
+  }
+
+  // Only zones the active route actually crosses can alert. A zone logs once
+  // (via triggerRouteAlert) the first time it's within lookahead range, and stays
+  // in `approachingTimZones` — driving the persistent nav alert UI — until either
+  // it drops out of `timHits` (route no longer crosses it) or the user enters it.
+  private checkTimZoneAlerts(userPt: Feature<Point>): void {
+    const approaching: TimHit[] = [];
+    const distances = new Map<number, number>();
+
+    for (const hit of this.timHits) {
+      try {
+        const poly = polygon(hit.geometry.coordinates);
+        const inside = booleanPointInPolygon(userPt, poly);
+        const distM = inside ? 0 : pointToLineDistance(userPt, polygonToLine(poly), { units: 'meters' });
+
+        if (distM <= TIM_ALERT_LOOKAHEAD_M) {
+          if (!this._alertedTimIds.has(hit.timId)) {
+            this._alertedTimIds.add(hit.timId);
+            this.timService.triggerRouteAlert(hit);
+          }
+          if (!inside) {
+            approaching.push(hit);
+            distances.set(hit.timId, distM);
+          }
+        }
+      } catch {
+        // Skip malformed zone
+      }
+    }
+
+    runInAction(() => {
+      this.approachingTimZones = approaching;
+      this.approachingTimZoneDistancesM = distances;
+    });
   }
 }
 

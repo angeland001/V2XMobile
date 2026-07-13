@@ -3,214 +3,203 @@ import { Animated, View, Text, StyleSheet } from 'react-native';
 import { observer } from 'mobx-react-lite';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TimService } from '../../TIM/services/TimService';
+import { RouteViewModel } from '../../Route/viewmodels/RouteViewModel';
 import { SettingsViewModel } from '../viewmodels/SettingsViewModel';
 
-// Toast stays dark regardless of theme — it's an overlay that needs to read on any background
-const TOAST_COLORS = {
-  bg: 'rgba(20, 20, 30, 0.96)',
+// Stays dark regardless of theme — it's an overlay that needs to read on any background
+const COLORS = {
+  bg: 'rgba(20, 20, 30, 0.9)',
   red: '#EF4444',
-  redBg: 'rgba(239, 68, 68, 0.15)',
   amber: '#F59E0B',
-  amberBg: 'rgba(245, 158, 11, 0.15)',
   blue: '#38BDF8',
-  blueBg: 'rgba(56, 189, 248, 0.15)',
   text: '#F1F5F9',
-  meta: 'rgba(241, 245, 249, 0.5)',
+  meta: 'rgba(241, 245, 249, 0.55)',
 };
 
-function severityInfo(severity: number): { label: string; color: string } {
-  if (severity >= 5) return { label: 'CRITICAL', color: '#EF4444' };
-  if (severity >= 4) return { label: 'HIGH',     color: '#F97316' };
-  if (severity >= 3) return { label: 'MODERATE', color: '#F59E0B' };
-  if (severity >= 1) return { label: 'LOW',      color: '#22C55E' };
-  return { label: 'UNKNOWN', color: 'rgba(241,245,249,0.4)' };
+type TimCategory = 'safety' | 'regulatory' | 'informational';
+
+interface DisplayItem {
+  key: string;
+  category: TimCategory;
+  message: string;
+  distanceM: number | null;
+  persistent: boolean; // true = stays until condition clears; false = auto-dismiss
 }
 
-function formatDistance(miles: number): string {
-  if (miles < 0.1) return `${Math.round(miles * 5280)} ft`;
-  return `${miles.toFixed(1)} mi`;
+function accentFor(category: TimCategory): string {
+  return category === 'safety' ? COLORS.red : category === 'regulatory' ? COLORS.amber : COLORS.blue;
 }
+
+function iconFor(category: TimCategory): string {
+  return category === 'safety' ? '⚠️' : category === 'regulatory' ? '🚧' : 'ℹ️';
+}
+
+function formatDistanceMeters(m: number): string {
+  const ft = m * 3.28084;
+  if (ft < 1000) return `${Math.round(ft / 50) * 50 || Math.round(ft)} ft`;
+  const mi = m / 1609.34;
+  return `${mi.toFixed(1)} mi`;
+}
+
+interface TimZoneChipProps {
+  item: DisplayItem;
+  onAutoDismiss?: () => void;
+}
+
+const TimZoneChip: React.FC<TimZoneChipProps> = ({ item, onAutoDismiss }) => {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(24)).current;
+
+  // Keyed on item.key by the parent list, so this effect only re-fires the
+  // entrance animation when a genuinely new zone appears, not on every tick.
+  useEffect(() => {
+    opacity.setValue(0);
+    translateX.setValue(24);
+    Animated.parallel([
+      Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 12 }),
+    ]).start();
+
+    if (!item.persistent && onAutoDismiss) {
+      const timer = setTimeout(() => {
+        Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true }).start(onAutoDismiss);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [item.key]);
+
+  const accent = accentFor(item.category);
+
+  return (
+    <Animated.View style={[styles.chip, { borderLeftColor: accent, opacity, transform: [{ translateX }] }]}>
+      <Text style={styles.icon}>{iconFor(item.category)}</Text>
+      <View style={styles.chipText}>
+        <Text style={styles.message} numberOfLines={2}>{item.message}</Text>
+        {item.distanceM != null && (
+          <Text style={styles.meta}>{formatDistanceMeters(item.distanceM)} ahead</Text>
+        )}
+      </View>
+    </Animated.View>
+  );
+};
 
 interface TimToastProps {
   timService: TimService;
+  routeViewModel: RouteViewModel;
   settingsViewModel: SettingsViewModel;
   isNavigating?: boolean;
 }
 
 // Height of NavigationBanner (status bar + content)
 const NAV_BANNER_HEIGHT = 130;
+const MAX_VISIBLE = 2;
 
-export const TimToast: React.FC<TimToastProps> = observer(({ timService, settingsViewModel, isNavigating = false }) => {
-  const toast = timService.toastQueue[0] ?? null;
-  const insets = useSafeAreaInsets();
+export const TimToast: React.FC<TimToastProps> = observer(
+  ({ timService, routeViewModel, settingsViewModel, isNavigating = false }) => {
+    const insets = useSafeAreaInsets();
 
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(-20)).current;
-  const showingId = useRef<string | null>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+    const categoryEnabled = (category: TimCategory): boolean =>
+      (category === 'safety' && settingsViewModel.safetyAlerts) ||
+      (category === 'regulatory' && settingsViewModel.regulatoryAlerts) ||
+      (category === 'informational' && settingsViewModel.informationalAlerts);
 
-  // Auto-dismiss toasts whose category is disabled in settings
-  useEffect(() => {
-    if (!toast) return;
-    const enabled =
-      (toast.category === 'safety' && settingsViewModel.safetyAlerts) ||
-      (toast.category === 'regulatory' && settingsViewModel.regulatoryAlerts) ||
-      (toast.category === 'informational' && settingsViewModel.informationalAlerts);
-    if (!enabled) timService.dismissToast(toast.id);
-  }, [toast?.id, settingsViewModel.safetyAlerts, settingsViewModel.regulatoryAlerts, settingsViewModel.informationalAlerts]);
+    // Ambient toast (not navigating): ephemeral, drains TimService.toastQueue.
+    const ambientToast = !isNavigating ? timService.toastQueue[0] ?? null : null;
 
-  useEffect(() => {
-    if (!toast) {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = null;
-      showingId.current = null;
-      return;
+    useEffect(() => {
+      if (!ambientToast) return;
+      if (!categoryEnabled(ambientToast.category)) timService.dismissToast(ambientToast.id);
+    }, [ambientToast?.id, settingsViewModel.safetyAlerts, settingsViewModel.regulatoryAlerts, settingsViewModel.informationalAlerts]);
+
+    let items: DisplayItem[];
+    if (isNavigating) {
+      // Persistent: stays until the route no longer crosses the zone or the user enters it.
+      items = routeViewModel.approachingTimZones
+        .filter((hit) => categoryEnabled(hit.category))
+        .sort((a, b) => (routeViewModel.approachingTimZoneDistancesM.get(a.timId) ?? Infinity) -
+                        (routeViewModel.approachingTimZoneDistancesM.get(b.timId) ?? Infinity))
+        .slice(0, MAX_VISIBLE)
+        .map((hit) => ({
+          key: `route-${hit.timId}`,
+          category: hit.category,
+          message: hit.description ?? `${hit.timType} ahead`,
+          distanceM: routeViewModel.approachingTimZoneDistancesM.get(hit.timId) ?? null,
+          persistent: true,
+        }));
+    } else if (ambientToast && categoryEnabled(ambientToast.category)) {
+      const distanceMi = timService.timDistances.get(ambientToast.timId);
+      items = [{
+        key: ambientToast.id,
+        category: ambientToast.category,
+        message: ambientToast.message,
+        distanceM: distanceMi != null ? distanceMi * 1609.34 : null,
+        persistent: false,
+      }];
+    } else {
+      items = [];
     }
 
-    if (toast.id === showingId.current) return;
-    showingId.current = toast.id;
+    if (items.length === 0) return null;
 
-    if (timerRef.current) clearTimeout(timerRef.current);
-
-    opacity.setValue(0);
-    translateY.setValue(-20);
-
-    Animated.parallel([
-      Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 120, friction: 10 }),
-      Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
-    ]).start();
-
-    timerRef.current = setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(opacity, { toValue: 0, duration: 320, useNativeDriver: true }),
-        Animated.timing(translateY, { toValue: -8, duration: 320, useNativeDriver: true }),
-      ]).start(() => {
-        timService.dismissToast(toast.id);
-      });
-    }, 4000);
-
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [toast?.id]);
-
-  if (!toast) return null;
-
-  const accentColor =
-    toast.category === 'safety' ? TOAST_COLORS.red :
-    toast.category === 'regulatory' ? TOAST_COLORS.amber :
-    TOAST_COLORS.blue;
-  const iconBg =
-    toast.category === 'safety' ? TOAST_COLORS.redBg :
-    toast.category === 'regulatory' ? TOAST_COLORS.amberBg :
-    TOAST_COLORS.blueBg;
-  const icon =
-    toast.category === 'safety' ? '⚠️' :
-    toast.category === 'regulatory' ? '🚧' : 'ℹ️';
-  const categoryLabel =
-    toast.category === 'safety' ? 'SAFETY ALERT' :
-    toast.category === 'regulatory' ? 'ZONE WARNING' : 'ROAD INFO';
-
-  const distanceMi = timService.timDistances.get(toast.timId);
-  const sev = severityInfo(toast.severity);
-
-  return (
-    <Animated.View
-      style={[
-        styles.container,
-        {
-          top: isNavigating ? NAV_BANNER_HEIGHT + 10 : insets.top + 10,
-          opacity,
-          transform: [{ translateY }],
-          borderLeftColor: accentColor,
-        },
-      ]}
-    >
-      <View style={[styles.iconWrap, { backgroundColor: iconBg }]}>
-        <Text style={styles.iconText}>{icon}</Text>
+    return (
+      <View
+        style={[
+          styles.container,
+          { top: isNavigating ? NAV_BANNER_HEIGHT + 10 : insets.top + 10 },
+        ]}
+        pointerEvents="none"
+      >
+        {items.map((item) => (
+          <TimZoneChip
+            key={item.key}
+            item={item}
+            onAutoDismiss={!item.persistent ? () => timService.dismissToast(item.key) : undefined}
+          />
+        ))}
       </View>
-      <View style={styles.textWrap}>
-        <View style={styles.topRow}>
-          <Text style={[styles.label, { color: accentColor }]}>{categoryLabel}</Text>
-          <View style={[styles.sevBadge, { borderColor: sev.color }]}>
-            <Text style={[styles.sevText, { color: sev.color }]}>{sev.label}</Text>
-          </View>
-        </View>
-        <Text style={styles.message} numberOfLines={2}>{toast.message}</Text>
-        {distanceMi != null && (
-          <Text style={styles.metaText}>📍 {formatDistance(distanceMi)} away</Text>
-        )}
-      </View>
-    </Animated.View>
-  );
-});
+    );
+  },
+);
 
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: TOAST_COLORS.bg,
-    borderRadius: 12,
-    borderLeftWidth: 3,
-    paddingVertical: 10,
-    paddingRight: 14,
-    paddingLeft: 12,
+    right: 10,
+    maxWidth: 180,
+    gap: 8,
     zIndex: 9999,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 12,
-    elevation: 20,
-    gap: 10,
   },
-  iconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  iconText: {
-    fontSize: 16,
-  },
-  textWrap: {
-    flex: 1,
-    gap: 3,
-  },
-  topRow: {
+  chip: {
     flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    backgroundColor: COLORS.bg,
+    borderRadius: 10,
+    borderLeftWidth: 3,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 6,
+    elevation: 10,
   },
-  label: {
-    fontSize: 9,
-    fontWeight: '700',
-    letterSpacing: 1.4,
+  icon: {
+    fontSize: 13,
   },
-  sevBadge: {
-    borderWidth: 1,
-    borderRadius: 4,
-    paddingHorizontal: 5,
-    paddingVertical: 1,
-  },
-  sevText: {
-    fontSize: 8,
-    fontWeight: '700',
-    letterSpacing: 0.8,
+  chipText: {
+    flex: 1,
+    gap: 2,
   },
   message: {
-    color: TOAST_COLORS.text,
-    fontSize: 13,
-    fontWeight: '500',
-    lineHeight: 18,
+    color: COLORS.text,
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 14,
   },
-  metaText: {
-    color: TOAST_COLORS.meta,
-    fontSize: 10,
+  meta: {
+    color: COLORS.meta,
+    fontSize: 9,
     fontWeight: '500',
   },
 });

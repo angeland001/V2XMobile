@@ -20,6 +20,7 @@ export const AppNavigator: React.FC = observer(() => {
       <MainNavigator viewModel={mainViewModel} />
       <TimToast
         timService={mainViewModel.timService}
+        routeViewModel={mainViewModel.routeViewModel}
         settingsViewModel={mainViewModel.settingsViewModel}
         isNavigating={mainViewModel.routeViewModel.isNavigating}
       />

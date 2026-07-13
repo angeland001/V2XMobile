@@ -6,10 +6,15 @@ import { LocationService } from '../services/LocationService';
 // Define a type for the heading subscription
 type HeadingSubscription = { remove: () => void };
 
+// Below this GPS ground speed (m/s), the device is treated as stationary —
+// filters out compass/GPS noise that would otherwise read as "heading somewhere".
+const MIN_MOVING_SPEED_MPS = 1;
+
 export class MapViewModel {
   userLocation: Coordinate = { longitude: -85.2749, latitude: 35.0458 };
   userHeading: number = 0;
   headingValid: boolean = false;
+  userSpeed: number = 0;
   isInitialized: boolean = false;
   loading: boolean = false;
   showCrosswalkPolygon: boolean = false; // Toggle for polygon visibility
@@ -80,11 +85,18 @@ export class MapViewModel {
       this.userHeading = location.heading;
       this.headingValid = true;
     }
+    if (location.speed !== undefined && location.speed !== null) {
+      this.userSpeed = location.speed;
+    }
   }
 
   // Get user heading
   getUserHeading(): number {
     return this.userHeading;
+  }
+
+  get isMoving(): boolean {
+    return this.userSpeed >= MIN_MOVING_SPEED_MPS;
   }
 
   setLoading(loading: boolean) {
