@@ -6,6 +6,14 @@
 // field, mirroring the sdsm-events convention (`intersectionID`/`intersection`,
 // see VehicleDisplayViewModel.ts) — this is unverified against a live spat-events
 // payload, so the first message received is logged in full to confirm/correct it.
+//
+// Connection is fully demand-driven: SpatViewModel only ever needs live data for
+// the one intersection whose zone the user is currently standing in, so the
+// socket connects on zone entry (via connectFor) and closes on zone exit (via
+// disconnect) instead of staying open for the whole app session. On connect, the
+// client tells the bridge which intersection it wants (see the `subscribe`
+// message below); the bridge filters server-side so this client only ever
+// receives that one intersection's messages, not all ~13 on the corridor.
 
 import { API_CONFIG } from '../../../core/api/config';
 
@@ -41,26 +49,69 @@ function tokensOverlap(a: string[], b: string[]): boolean {
 
 export class SpatWebSocketService {
   private static socket: WebSocket | null = null;
-  private static isStarted = false;
+  private static isConnecting = false;
   private static reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private static latestByIntersection: Map<string, CacheEntry> = new Map();
   private static loggedFirstMessage = false;
+  // The intersection the current zone wants live data for. null means nothing
+  // needs a connection right now — drives both whether to (re)connect and
+  // whether onclose should schedule a reconnect at all.
+  private static desiredIntersection: string | null = null;
 
-  /** Idempotent — safe to call from every SpatViewModel instance. */
-  static ensureConnected(): void {
+  /**
+   * Connects (if not already) and (re)subscribes the bridge to `intersectionName`.
+   * Call on every zone entry / zone-to-zone transition whose new zone has CUIP
+   * coverage — safe to call repeatedly with the same value.
+   */
+  static connectFor(intersectionName: string): void {
     if (!API_CONFIG.SPAT_WS_ENABLED) return;
-    if (SpatWebSocketService.isStarted) return;
-    SpatWebSocketService.isStarted = true;
+    SpatWebSocketService.desiredIntersection = intersectionName;
+
+    if (SpatWebSocketService.socket?.readyState === WebSocket.OPEN) {
+      SpatWebSocketService.sendSubscribe(intersectionName);
+      return;
+    }
+
+    if (SpatWebSocketService.isConnecting) return; // onopen will subscribe once ready
     SpatWebSocketService.connect();
   }
 
+  /** Closes the connection — call on zone exit. Nothing needs live data once
+   *  the user has left every CUIP-covered zone, so there's no reason to keep a
+   *  socket (and the resulting parse traffic) alive. */
+  static disconnect(): void {
+    SpatWebSocketService.desiredIntersection = null;
+
+    if (SpatWebSocketService.reconnectTimeoutId) {
+      clearTimeout(SpatWebSocketService.reconnectTimeoutId);
+      SpatWebSocketService.reconnectTimeoutId = null;
+    }
+    SpatWebSocketService.isConnecting = false;
+
+    if (SpatWebSocketService.socket) {
+      const socket = SpatWebSocketService.socket;
+      SpatWebSocketService.socket = null;
+      socket.close();
+    }
+  }
+
+  private static sendSubscribe(intersectionName: string): void {
+    if (SpatWebSocketService.socket?.readyState !== WebSocket.OPEN) return;
+    SpatWebSocketService.socket.send(JSON.stringify({ subscribe: intersectionName }));
+  }
+
   private static connect(): void {
+    SpatWebSocketService.isConnecting = true;
     try {
       const ws = new WebSocket(API_CONFIG.SPAT_WS_URL);
       SpatWebSocketService.socket = ws;
 
       ws.onopen = () => {
         console.log('[SpatWS] Connected:', API_CONFIG.SPAT_WS_URL);
+        SpatWebSocketService.isConnecting = false;
+        if (SpatWebSocketService.desiredIntersection) {
+          SpatWebSocketService.sendSubscribe(SpatWebSocketService.desiredIntersection);
+        }
       };
 
       ws.onmessage = (event: MessageEvent) => {
@@ -93,7 +144,10 @@ export class SpatWebSocketService {
 
       ws.onclose = () => {
         SpatWebSocketService.socket = null;
-        if (SpatWebSocketService.isStarted) {
+        SpatWebSocketService.isConnecting = false;
+        // Only reconnect if something still wants live data — otherwise this
+        // would spin forever after the user has left every zone.
+        if (SpatWebSocketService.desiredIntersection) {
           SpatWebSocketService.scheduleReconnect();
         }
       };
@@ -104,6 +158,7 @@ export class SpatWebSocketService {
 
   private static scheduleReconnect(): void {
     if (!API_CONFIG.SPAT_WS_ENABLED) return;
+    if (!SpatWebSocketService.desiredIntersection) return;
     if (SpatWebSocketService.reconnectTimeoutId) return;
     SpatWebSocketService.reconnectTimeoutId = setTimeout(() => {
       SpatWebSocketService.reconnectTimeoutId = null;

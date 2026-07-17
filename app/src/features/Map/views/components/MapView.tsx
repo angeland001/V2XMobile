@@ -12,7 +12,6 @@ import { PedestrianDetectorViewModel } from "../../../PedestrianDetector/viewmod
 import { TestingPedestrianDetectorViewModel } from "../../../../testingFeatures/testingPedestrianDetectorFeatureTest/viewmodels/TestingPedestrianDetectorViewModel";
 import { VehicleDisplayViewModel } from "../../../SDSM/viewmodels/VehicleDisplayViewModel";
 import { DirectionGuideViewModel } from "../../../DirectionGuide/viewModels/DirectionGuideViewModel";
-import { TurnGuideDisplay } from "../../../DirectionGuide/views/components/TurnGuideDisplay";
 import { SpatViewModel } from "../../../SpatService/viewModels/SpatViewModel";
 import { VehicleMarkers } from "../../../SDSM/views/VehicleMarkers";
 import { VRUMarkers } from "../../../SDSM/views/VRUMarkers";
@@ -43,9 +42,9 @@ MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 // ---------------------------------------------------------------------------
 
 const TIM_CATEGORY_STYLES = {
-  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444', icon: 'warning' as const,            iconColor: '#EF4444' },
-  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B', icon: 'ban' as const,                iconColor: '#F59E0B' },
-  informational: { fill: 'rgba(59, 130, 246, 0.25)', stroke: '#3B82F6', icon: 'information-circle' as const, iconColor: '#3B82F6' },
+  safety:        { fill: 'rgba(239, 68, 68, 0.25)',  stroke: '#EF4444', icon: 'warning' as const,            iconColor: '#EF4444', label: 'Safety' },
+  regulatory:    { fill: 'rgba(245, 158, 11, 0.25)', stroke: '#F59E0B', icon: 'ban' as const,                iconColor: '#F59E0B', label: 'Regulatory' },
+  informational: { fill: 'rgba(59, 130, 246, 0.25)', stroke: '#3B82F6', icon: 'information-circle' as const, iconColor: '#3B82F6', label: 'Info' },
 } as const;
 
 const lngLatCentroid = (coords: LngLat[]): [number, number] => [
@@ -106,8 +105,9 @@ const TIMLayer: React.FC<TIMLayerProps> = observer(({ mainViewModel }) => {
               />
             </MapboxGL.ShapeSource>
             <MapboxGL.MarkerView key={`tim-marker-${tim.id}`} coordinate={centroid}>
-              <View style={{ backgroundColor: 'white', borderRadius: 20, padding: 4, borderWidth: 1.5, borderColor: style.stroke }}>
-                <Ionicons name={style.icon} size={20} color={style.iconColor} />
+              <View style={[styles.timMarker, { borderColor: style.stroke }]}>
+                <Ionicons name={style.icon} size={14} color={style.iconColor} />
+                <Text style={[styles.timMarkerLabel, { color: style.iconColor }]}>{style.label}</Text>
               </View>
             </MapboxGL.MarkerView>
           </React.Fragment>
@@ -282,10 +282,18 @@ const RouteLayer: React.FC<RouteLayerProps> = observer(({ mainViewModel }) => {
   const routeVM = mainViewModel?.routeViewModel;
   if (!routeVM?.hasActiveRoute || routeVM.routeCoordinates.length < 2) return null;
 
+  // While navigating, draw only the portion of the route still ahead of the
+  // user — the traveled portion behind them drops off as they pass it.
+  // During preview/overview (not yet navigating) show the full route.
+  const displayCoordinates = routeVM.isNavigating
+    ? routeVM.remainingRouteCoordinates
+    : routeVM.routeCoordinates;
+  if (displayCoordinates.length < 2) return null;
+
   const shape: GeoJSON.Feature<GeoJSON.LineString> = {
     type: 'Feature',
     properties: {},
-    geometry: { type: 'LineString', coordinates: routeVM.routeCoordinates },
+    geometry: { type: 'LineString', coordinates: displayCoordinates },
   };
 
   return (
@@ -375,6 +383,11 @@ const MAPBOX_STYLES = {
 
 // How far bottom UI elements shift up to clear the NavigationSummaryBar
 const NAV_SUMMARY_OFFSET = 70;
+
+// Ease duration for the per-fix nav camera follow update. Longer than the
+// 50ms throttle interval so each new setCamera call overrides the previous
+// easing in flight (continuous smooth motion) instead of snapping.
+const CAMERA_FOLLOW_EASE_MS = 300;
 
 // ---------------------------------------------------------------------------
 // Main MapViewComponent
@@ -555,7 +568,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         : undefined;
       cameraRef.current?.setCamera({
         centerCoordinate: [position[1], position[0]],
-        animationDuration: 0,
+        // Ease toward each new fix instead of snapping — a zero duration here
+        // was the main cause of the following camera looking jittery/uncentered,
+        // since position, pitch, and heading all teleported on every GPS update.
+        animationDuration: CAMERA_FOLLOW_EASE_MS,
         ...(navigating ? { pitch: 45, heading: routeBearing } : {}),
       });
     };
@@ -876,7 +892,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         {routeVM && (
           <NavigationBanner
             routeViewModel={routeVM}
-            onBannerLayout={setNavBannerHeight}
+            onBannerLayout={(height) => {
+              setNavBannerHeight(height);
+              routeVM.setNavBannerHeightPx(height);
+            }}
           />
         )}
 
@@ -1022,27 +1041,29 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         />
 
         <TrafficLightPanel
-          ssmStatus={preemptionViewModel.ssmStatus}
-          intersectionName={preemptionViewModel.activeZoneName ?? undefined}
+          ssmStatus={preemptionViewModel.displaySsmStatus}
+          intersectionName={preemptionViewModel.displayActiveZoneName ?? undefined}
           heartbeatPulse={preemptionViewModel.heartbeatProgress}
-          durationLabel={spatViewModel.phaseDurationLabel}
-          spatUnavailable={spatViewModel.spatUnavailable}
+          durationLabel={spatViewModel.displayPhaseDurationLabel}
+          // Suppress the "unavailable" alert whenever the controller-light
+          // fallback below has something to show instead — a colored light
+          // next to an "unavailable" label would be a contradiction.
+          spatUnavailable={spatViewModel.displaySpatUnavailable && preemptionViewModel.controllerLight === null}
+          phaseMismatch={preemptionViewModel.phaseMismatch}
+          requestedSignalGroup={preemptionViewModel.displayRequestedSignalGroup}
+          controllerSignalState={preemptionViewModel.displayControllerSignalState}
           activeLight={
-            spatViewModel.signalState === SignalState.GREEN ? 'green' :
-            spatViewModel.signalState === SignalState.RED ? 'red' :
-            spatViewModel.signalState === SignalState.YELLOW ? 'yellow' :
-            null
+            spatViewModel.displaySignalState === SignalState.GREEN ? 'green' :
+            spatViewModel.displaySignalState === SignalState.RED ? 'red' :
+            spatViewModel.displaySignalState === SignalState.YELLOW ? 'yellow' :
+            // No live CUIP color right now — whether that's because this
+            // intersection has no CUIP coverage at all (e.g. Lab_Device data
+            // that hasn't arrived) or a transient corridor gap, the preempt
+            // bridge's own live controller reading is a legitimate signal any
+            // time a preemption session has one. Prefer it over showing nothing.
+            preemptionViewModel.controllerLight
           }
           navOffset={isNavigating ? NAV_SUMMARY_OFFSET : 0}
-        />
-
-        <TurnGuideDisplay
-          spatViewModel={spatViewModel}
-          nextManeuverModifier={
-            mainViewModel?.routeViewModel?.isNavigating
-              ? mainViewModel.routeViewModel.currentStep?.maneuverModifier
-              : undefined
-          }
         />
 
         <PedestrianWarning activeDetector={activeDetector ?? null} />
@@ -1064,6 +1085,20 @@ const styles = StyleSheet.create({
   },
   map: {
     flex: 1,
+  },
+  timMarker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'white',
+    borderRadius: 12,
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderWidth: 1.5,
+  },
+  timMarkerLabel: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   toast: {
     position: 'absolute',

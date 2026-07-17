@@ -10,7 +10,7 @@ import {
 } from '@turf/turf';
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
 import { API_CONFIG } from '../../../core/api/config';
-import { normalizeToLngLat } from '../../../core/maps/coordinates';
+import { normalizeToLngLat, closeRing } from '../../../core/maps/coordinates';
 import { TimMessage, TimHit, timCategoryFromType } from '../models/TimTypes';
 
 export interface TimToastItem {
@@ -46,6 +46,11 @@ export class TimService {
   private pollInterval: NodeJS.Timeout | null = null;
   private bufferedCache = new Map<number, Feature<Polygon | MultiPolygon>>();
   private alertedIds = new Set<number>();
+  // False until the first checkProximity pass with real TIM data. That pass seeds
+  // alertedIds for anything already in-buffer without alerting — so a zone that
+  // was already "true" the moment monitoring started (e.g. at app boot) doesn't
+  // fire, and only a genuine transition into a zone does.
+  private hasSeededInitialProximity = false;
 
   constructor() {
     makeObservable(this, {
@@ -75,6 +80,7 @@ export class TimService {
     }
     this.alertedIds.clear();
     this.bufferedCache.clear();
+    this.hasSeededInitialProximity = false;
     runInAction(() => {
       this.activeTims = [];
       this.toastQueue = [];
@@ -98,6 +104,8 @@ export class TimService {
     const userPoint = point([longitude, latitude]);
     const nowInBuffer = new Set<number>();
     const newDistances = new Map<number, number>();
+    const isSeedPass = !this.hasSeededInitialProximity;
+    this.hasSeededInitialProximity = true;
 
     for (const tim of this.activeTims) {
       try {
@@ -114,7 +122,11 @@ export class TimService {
 
       if (inBuffer) {
         nowInBuffer.add(tim.id);
-        if (!this.alertedIds.has(tim.id)) {
+        if (isSeedPass) {
+          // Already inside the buffer the moment monitoring started — mark it
+          // seen without alerting, don't treat "was already true" as an approach.
+          this.alertedIds.add(tim.id);
+        } else if (!this.alertedIds.has(tim.id)) {
           const shouldAlert =
             heading === null || this.isHeadingTowardZone(latitude, longitude, tim, heading);
           if (shouldAlert) {
@@ -165,13 +177,17 @@ export class TimService {
     }
   }
 
+  // Closes each ring here, at the point geometry enters the system, so every
+  // consumer (buffer/intersection math in this file and in RouteViewModel) gets
+  // a turf-valid polygon — the dashboard API doesn't guarantee closed rings, and
+  // turf.polygon() throws (silently skipping the zone) on an unclosed one.
   private normalizeTimGeometry(tim: TimMessage): TimMessage {
     return {
       ...tim,
       geometry: {
         ...tim.geometry,
         coordinates: tim.geometry.coordinates.map((ring) =>
-          ring.map((coordinate) => normalizeToLngLat(coordinate as [number, number])),
+          closeRing(ring.map((coordinate) => normalizeToLngLat(coordinate as [number, number]))),
         ),
       },
     };
@@ -203,7 +219,9 @@ export class TimService {
   }
 
   private pushAlert(hit: TimHit, opts: { toast: boolean }): void {
-    const message = hit.description ?? `${hit.timType} ahead`;
+    // `??` only falls back on null/undefined — the API can also send an empty
+    // string for description, which would otherwise render as blank text.
+    const message = hit.description || `${hit.timType} ahead`;
     const id = `${hit.timId}-${Date.now()}`;
 
     runInAction(() => {

@@ -22,6 +22,18 @@ export class SpatViewModel {
   // than silently showing nothing.
   spatDataAvailable: boolean = false;
 
+  // Snapshot of the above, taken on every tick while shouldShowDisplay is
+  // true. Lets the display getters keep reporting the last known SPaT read
+  // for EXIT_GRACE_MS after actually leaving the zone, instead of blanking
+  // out the instant GPS crosses the exit line — see displaySignalState etc.
+  private lastSignalState: SignalState = SignalState.UNKNOWN;
+  private lastPhaseTiming: { minS: number; maxS: number } | null = null;
+  private lastSpatUnavailable: boolean = false;
+  private graceClearTimeout: NodeJS.Timeout | null = null;
+  // Keep in sync with PreemptionViewModel's EXIT_GRACE_MS — both linger the
+  // same TrafficLightPanel render for the same window after zone exit.
+  private static readonly EXIT_GRACE_MS = 3000;
+
   preferredZoneIds: string[] = [];
 
   private userPosition: [number, number] = [0, 0];
@@ -85,8 +97,10 @@ export class SpatViewModel {
   }
 
   startMonitoring(): void {
-    SpatWebSocketService.ensureConnected();
-
+    // No SpatWebSocketService connection here — it's demand-driven per zone
+    // (see enterZone/exitZone) rather than held open for the whole session,
+    // since at any moment we only ever care about one intersection: whichever
+    // zone the user currently occupies.
     if (this.updateInterval) return;
 
     this.checkZoneAndUpdateState();
@@ -128,6 +142,13 @@ export class SpatViewModel {
   }
 
   private enterZone(zone: SpatZone): void {
+    // Cancel any pending grace-clear from a just-left zone — we're back
+    // inside a zone, so the live snapshot below will keep the display fresh.
+    if (this.graceClearTimeout) {
+      clearTimeout(this.graceClearTimeout);
+      this.graceClearTimeout = null;
+    }
+
     const laneIds = Array.isArray(zone.laneIds) ? zone.laneIds : [];
     const displayLaneId = this.pickDisplayLaneId(laneIds);
 
@@ -143,11 +164,22 @@ export class SpatViewModel {
       this.zoneDisplayState.set(zone.id, false);
     }
 
+    // Connect (or resubscribe, on a direct zone-to-zone hop) to this zone's
+    // intersection specifically — no CUIP coverage at all (e.g. the lab
+    // bench controller) means no connection is worth holding open.
+    if (zone.intersectionName) {
+      SpatWebSocketService.connectFor(zone.intersectionName);
+    } else {
+      SpatWebSocketService.disconnect();
+    }
+
     // Pull whatever's cached from the live spat-events stream immediately.
     this.pollSpatData();
   }
 
   private exitZone(): void {
+    SpatWebSocketService.disconnect();
+
     runInAction(() => {
       this.currentIntersection = null;
       this.currentLaneId = null;
@@ -160,6 +192,22 @@ export class SpatViewModel {
       this.error = null;
       this.isLoading = false;
     });
+
+    this.scheduleGraceClear();
+  }
+
+  private scheduleGraceClear(): void {
+    if (this.graceClearTimeout) {
+      clearTimeout(this.graceClearTimeout);
+    }
+    this.graceClearTimeout = setTimeout(() => {
+      this.graceClearTimeout = null;
+      runInAction(() => {
+        this.lastSignalState = SignalState.UNKNOWN;
+        this.lastPhaseTiming = null;
+        this.lastSpatUnavailable = false;
+      });
+    }, SpatViewModel.EXIT_GRACE_MS);
   }
 
   // Reads whatever SpatWebSocketService has cached for the current zone's
@@ -171,24 +219,24 @@ export class SpatViewModel {
 
     const spatData = SpatWebSocketService.getLatest(this.currentIntersection);
 
-    if (!spatData) {
-      runInAction(() => {
+    runInAction(() => {
+      if (!spatData) {
         this.signalState = SignalState.UNKNOWN;
         this.currentPhaseTiming = null;
         this.spatDataAvailable = false;
         this.error = 'SPaT data unavailable for this intersection';
-      });
-      return;
-    }
+      } else {
+        this.signalState = SpatApiService.getSignalStateForGroup(spatData, this.currentSignalGroup!);
+        this.currentPhaseTiming = SpatApiService.getPhaseTimingForGroup(spatData, this.currentSignalGroup!);
+        this.spatDataAvailable = true;
+        this.error = null;
+      }
 
-    const signalState = SpatApiService.getSignalStateForGroup(spatData, this.currentSignalGroup);
-    const phaseTiming = SpatApiService.getPhaseTimingForGroup(spatData, this.currentSignalGroup);
-
-    runInAction(() => {
-      this.signalState = signalState;
-      this.currentPhaseTiming = phaseTiming;
-      this.spatDataAvailable = true;
-      this.error = null;
+      if (this.shouldShowDisplay) {
+        this.lastSignalState = this.signalState;
+        this.lastPhaseTiming = this.currentPhaseTiming;
+        this.lastSpatUnavailable = this.spatUnavailable;
+      }
     });
   }
 
@@ -206,10 +254,34 @@ export class SpatViewModel {
     return this.zoneDisplayState.get(this.currentZone.id) === true;
   }
 
-  // True once the user is inside an active zone but no live SPaT data has
-  // matched its intersection — the case the UI must call out explicitly.
+  // True when the current zone's intersection has a CUIP cuip_slug at all —
+  // i.e. CUIP's spat-events stream is expected to carry it eventually. False
+  // for zones on intersections CUIP doesn't configure (lab/bench
+  // controllers), which should never surface a "SPaT unavailable" alert since
+  // no live match will ever exist for them.
+  get hasCuipCoverage(): boolean {
+    return this.currentIntersection !== null;
+  }
+
+  // True once the user is inside an active zone whose intersection CUIP is
+  // expected to cover, but no live SPaT data has matched it yet — the case
+  // the UI must call out explicitly. Zones with no CUIP coverage at all stay
+  // silent instead (see hasCuipCoverage).
   get spatUnavailable(): boolean {
-    return this.shouldShowDisplay && !this.spatDataAvailable;
+    return this.shouldShowDisplay && this.hasCuipCoverage && !this.spatDataAvailable;
+  }
+
+  // Display-only variants that linger the last live value for
+  // EXIT_GRACE_MS after leaving a zone, instead of snapping to the "nothing
+  // here" state the instant GPS crosses the exit line. TrafficLightPanel
+  // reads these (not the raw fields above) so it keeps showing the light the
+  // driver just had for a couple seconds after the intersection is behind them.
+  get displaySignalState(): SignalState {
+    return this.shouldShowDisplay ? this.signalState : this.lastSignalState;
+  }
+
+  get displaySpatUnavailable(): boolean {
+    return this.shouldShowDisplay ? this.spatUnavailable : this.lastSpatUnavailable;
   }
 
   get signalStatusText(): string {
@@ -239,10 +311,18 @@ export class SpatViewModel {
   }
 
   get phaseDurationLabel(): string {
-    if (!this.currentPhaseTiming || this.currentPhaseTiming.maxS <= 0) return '--';
+    return this.formatPhaseDuration(this.currentPhaseTiming);
+  }
 
-    const lo = Math.round(this.currentPhaseTiming.minS);
-    const hi = Math.round(this.currentPhaseTiming.maxS);
+  get displayPhaseDurationLabel(): string {
+    return this.formatPhaseDuration(this.shouldShowDisplay ? this.currentPhaseTiming : this.lastPhaseTiming);
+  }
+
+  private formatPhaseDuration(timing: { minS: number; maxS: number } | null): string {
+    if (!timing || timing.maxS <= 0) return '--';
+
+    const lo = Math.round(timing.minS);
+    const hi = Math.round(timing.maxS);
 
     return lo === hi ? `~${lo}s` : `~${lo}–${hi}s`;
   }
@@ -257,9 +337,15 @@ export class SpatViewModel {
 
   cleanup(): void {
     this.stopMonitoring();
+    SpatWebSocketService.disconnect();
     this.currentZone = null;
     this.previousPosition = null;
     this.zoneDisplayState.clear();
+
+    if (this.graceClearTimeout) {
+      clearTimeout(this.graceClearTimeout);
+      this.graceClearTimeout = null;
+    }
 
     runInAction(() => {
       this.currentLaneId = null;

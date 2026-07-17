@@ -6,9 +6,9 @@ import {
   polygon,
   point,
   nearestPointOnLine,
-  pointToLineDistance,
-  polygonToLine,
+  lineIntersect,
   bearing,
+  along,
   distance as turfDistance,
 } from '@turf/turf';
 import type { Feature, LineString, Point } from 'geojson';
@@ -17,6 +17,9 @@ import { TimHit } from '../../TIM/models/TimTypes';
 import { SpatZoneService } from '../../SpatService/services/SpatZoneService';
 import { PreemptionConfigService } from '../../preemption/services/PreemptionConfigService';
 import { VoiceGuidanceService } from '../services/VoiceGuidanceService';
+
+// Distance ahead of the snapped position to aim the nav camera's heading at.
+const ROUTE_BEARING_LOOKAHEAD_METERS = 20;
 
 export type { TimHit };
 
@@ -65,6 +68,11 @@ export class RouteViewModel {
 
   // ── Route overview ────────────────────────────────────────────────────────
   routeCoordinates: [number, number][] = [];
+  // routeCoordinates trimmed to the portion still ahead of the user — the
+  // traveled portion behind them is dropped as they pass it. Updated in
+  // updateProgress(); RouteLayer draws this instead of routeCoordinates
+  // once navigation is active.
+  remainingRouteCoordinates: [number, number][] = [];
   routeDistance: string = '';
   routeDuration: string = '';
   isLoadingRoute: boolean = false;
@@ -82,6 +90,10 @@ export class RouteViewModel {
   totalDurationS: number = 0;
   hasArrived: boolean = false;
   isOverviewMode: boolean = false;
+  // Measured height of NavigationBanner (from its onLayout), shared so any
+  // overlay positioned below it — even ones mounted outside MapView's tree,
+  // like TimToast — can clear it without guessing a fixed offset.
+  navBannerHeightPx: number = 130;
 
   // ── V2X analysis ──────────────────────────────────────────────────────────
   timHits: TimHit[] = [];
@@ -96,6 +108,12 @@ export class RouteViewModel {
   private lastOffRouteCheck: number = 0;
   private _announcedKeys: Set<string> = new Set();
   private _alertedTimIds: Set<number> = new Set();
+  // Distance (meters, from route start) at which each TIM hit's zone boundary
+  // first crosses the route — lets checkTimZoneAlerts measure how far *ahead*
+  // the user is from a zone instead of straight-line distance to its nearest
+  // edge, which has no notion of direction of travel and can read as closest
+  // on the far/exit side of an irregular zone.
+  private _timEntryRouteLocationM: Map<number, number> = new Map();
 
   constructor(private timService: TimService) {
     makeAutoObservable(this);
@@ -165,6 +183,7 @@ export class RouteViewModel {
 
   setShowSuggestions(show: boolean): void { this.showSuggestions = show; }
   clearSuggestions(): void { this.toSuggestions = []; this.showSuggestions = false; }
+  setNavBannerHeightPx(height: number): void { this.navBannerHeightPx = height; }
 
   selectToSuggestion(s: GeocodingSuggestion): void {
     this.toCoord = s.center;
@@ -217,6 +236,7 @@ export class RouteViewModel {
   clearRoute(): void {
     VoiceGuidanceService.stop();
     this.routeCoordinates = [];
+    this.remainingRouteCoordinates = [];
     this.routeDistance = '';
     this.routeDuration = '';
     this.isLoadingRoute = false;
@@ -275,6 +295,7 @@ export class RouteViewModel {
           runInAction(() => {
             this.hasArrived = true;
             this.routeCoordinates = [];
+            this.remainingRouteCoordinates = [];
           });
           VoiceGuidanceService.announce('You have arrived at your destination');
           return;
@@ -286,6 +307,16 @@ export class RouteViewModel {
 
       // `location` is distance along the route line from the start to the snapped point
       const distTraveled = (snapped.properties.location as number) ?? 0;
+
+      // Trim the traveled portion off the drawn route line as the user passes
+      // it — only once actually navigating, so the full route still shows
+      // during route preview/overview.
+      const trimmedCoordinates: [number, number][] | null = this.isNavigating
+        ? [
+            snapped.geometry.coordinates as [number, number],
+            ...this.routeCoordinates.slice((snapped.properties.index ?? 0) + 1),
+          ]
+        : null;
 
       // Find which step the user is currently in
       let cumDist = 0;
@@ -327,6 +358,7 @@ export class RouteViewModel {
         this.distanceToNextManeuver = distToManeuver;
         this.remainingDistanceM = remainingM;
         this.remainingDurationS = remainingS;
+        if (trimmedCoordinates) this.remainingRouteCoordinates = trimmedCoordinates;
       });
     } catch {
       // Silent — turf errors on edge-case geometry
@@ -386,9 +418,12 @@ export class RouteViewModel {
       const userPt = point(userLngLat);
       const routeLine = lineString(this.routeCoordinates);
       const snapped = nearestPointOnLine(routeLine, userPt, { units: 'meters' });
-      const idx = snapped.properties.index ?? 0;
-      const nextIdx = Math.min(idx + 1, this.routeCoordinates.length - 1);
-      return bearing(point(this.routeCoordinates[idx]), point(this.routeCoordinates[nextIdx]));
+      // Aim at a point ahead along the route rather than the nearest vertex —
+      // vertex-to-vertex bearing is a step function that jumps at every
+      // polyline joint, which snaps the nav camera's heading instead of
+      // turning it smoothly through curves.
+      const lookaheadPoint = along(routeLine, (snapped.properties.location ?? 0) + ROUTE_BEARING_LOOKAHEAD_METERS, { units: 'meters' });
+      return bearing(snapped, lookaheadPoint);
     } catch {
       return null;
     }
@@ -448,6 +483,7 @@ export class RouteViewModel {
 
       runInAction(() => {
         this.routeCoordinates = coordinates;
+        this.remainingRouteCoordinates = coordinates;
         this.routeDistance = `${distanceMi} mi`;
         this.routeDuration = `${durationMin} min`;
         this.totalDurationS = route.duration;
@@ -479,12 +515,26 @@ export class RouteViewModel {
   private async analyzePreemptionZones(): Promise<void> {
     if (this.routeCoordinates.length < 2) return;
     try {
-      const [configs, zones] = await Promise.all([
-        PreemptionConfigService.fetchAllConfigs(),
-        Promise.resolve(SpatZoneService.getActiveZones()),
-      ]);
+      const zones = SpatZoneService.getActiveZones();
+
+      // The dashboard requires intersection_id per request, so query once per
+      // distinct intersection along the route rather than a single global
+      // call. Zones without a known intersectionId (e.g. the hardcoded
+      // SPAT_ZONES fallback) can't be checked and are treated as unconfigured.
+      const intersectionIds = Array.from(
+        new Set(
+          zones
+            .map((z) => z.intersectionId)
+            .filter((id): id is number => typeof id === 'number'),
+        ),
+      );
+      const configLists = await Promise.all(
+        intersectionIds.map((id) => PreemptionConfigService.fetchAllConfigs(id)),
+      );
+      const configs = configLists.filter((c): c is NonNullable<typeof c> => c !== null).flat();
+
       const configuredZoneIds = new Set(
-        (configs ?? []).filter(c => c.signalGroup !== null).map(c => c.spatZoneId),
+        configs.filter(c => c.signalGroup !== null).map(c => c.spatZoneId),
       );
       const routeLine: Feature<LineString> = lineString(this.routeCoordinates);
       const hits: PreemptionHit[] = [];
@@ -514,54 +564,82 @@ export class RouteViewModel {
     try {
       const routeLine: Feature<LineString> = lineString(this.routeCoordinates);
       const hits: TimHit[] = [];
+      const entryLocations = new Map<number, number>();
       for (const tim of this.timService.activeTims) {
         try {
-          if (booleanIntersects(routeLine, polygon(tim.geometry.coordinates))) {
-            hits.push({
-              timId: tim.id,
-              timType: tim.tim_type,
-              category: tim.category,
-              severity: tim.severity,
-              description: tim.description,
-              itisCodes: tim.itis_codes,
-              validFrom: tim.valid_from,
-              validUntil: tim.valid_until,
-              geometry: tim.geometry,
-            });
+          const poly = polygon(tim.geometry.coordinates);
+          if (!booleanIntersects(routeLine, poly)) continue;
+          hits.push({
+            timId: tim.id,
+            timType: tim.tim_type,
+            category: tim.category,
+            severity: tim.severity,
+            description: tim.description,
+            itisCodes: tim.itis_codes,
+            validFrom: tim.valid_from,
+            validUntil: tim.valid_until,
+            geometry: tim.geometry,
+          });
+
+          // Where along the route the zone boundary is first crossed, so
+          // checkTimZoneAlerts can measure distance ahead of the user rather
+          // than straight-line distance to the nearest (possibly far-side) edge.
+          const crossings = lineIntersect(routeLine, poly);
+          let entryLocationM = Infinity;
+          for (const crossing of crossings.features) {
+            const loc = nearestPointOnLine(routeLine, crossing, { units: 'meters' }).properties.location;
+            if (loc != null && loc < entryLocationM) entryLocationM = loc;
           }
+          if (isFinite(entryLocationM)) entryLocations.set(tim.id, entryLocationM);
         } catch {
           // Skip malformed TIM
         }
       }
-      runInAction(() => { this.timHits = hits; });
+      runInAction(() => { this.timHits = hits; this._timEntryRouteLocationM = entryLocations; });
     } catch {
       // Silent
     }
   }
 
   // Only zones the active route actually crosses can alert. A zone logs once
-  // (via triggerRouteAlert) the first time it's within lookahead range, and stays
-  // in `approachingTimZones` — driving the persistent nav alert UI — until either
-  // it drops out of `timHits` (route no longer crosses it) or the user enters it.
+  // (via triggerRouteAlert) the first time its entry point is within lookahead
+  // range *ahead* of the user, and stays in `approachingTimZones` — driving the
+  // persistent nav alert UI — until either it drops out of `timHits` (route no
+  // longer crosses it) or the user enters it.
+  //
+  // Distance is measured along the route (userRouteLocation -> zone's entry
+  // crossing), not straight-line to the nearest boundary point: a straight-line
+  // distance has no notion of direction of travel, so for an irregular zone the
+  // nearest edge can be on the far/exit side, making the alert fire only once
+  // the user has already passed through.
   private checkTimZoneAlerts(userPt: Feature<Point>): void {
     const approaching: TimHit[] = [];
     const distances = new Map<number, number>();
+
+    if (this.routeCoordinates.length < 2) return;
+    const routeLine: Feature<LineString> = lineString(this.routeCoordinates);
+    const userRouteLocationM = nearestPointOnLine(routeLine, userPt, { units: 'meters' }).properties.location ?? 0;
 
     for (const hit of this.timHits) {
       try {
         const poly = polygon(hit.geometry.coordinates);
         const inside = booleanPointInPolygon(userPt, poly);
-        const distM = inside ? 0 : pointToLineDistance(userPt, polygonToLine(poly), { units: 'meters' });
 
-        if (distM <= TIM_ALERT_LOOKAHEAD_M) {
-          if (!this._alertedTimIds.has(hit.timId)) {
-            this._alertedTimIds.add(hit.timId);
-            this.timService.triggerRouteAlert(hit);
-          }
-          if (!inside) {
-            approaching.push(hit);
-            distances.set(hit.timId, distM);
-          }
+        let distanceAheadM: number | null = null;
+        if (!inside) {
+          const entryLocationM = this._timEntryRouteLocationM.get(hit.timId);
+          if (entryLocationM == null) continue; // route never crosses into this zone from outside
+          distanceAheadM = entryLocationM - userRouteLocationM;
+          if (distanceAheadM < 0 || distanceAheadM > TIM_ALERT_LOOKAHEAD_M) continue;
+        }
+
+        if (!this._alertedTimIds.has(hit.timId)) {
+          this._alertedTimIds.add(hit.timId);
+          this.timService.triggerRouteAlert(hit);
+        }
+        if (!inside) {
+          approaching.push(hit);
+          distances.set(hit.timId, distanceAheadM as number);
         }
       } catch {
         // Skip malformed zone

@@ -65,7 +65,12 @@ export const toMapboxPosition = (coord: LngLat): [number, number] => coord;
 export const toMapboxPath = (coords: LngLat[] = []): [number, number][] =>
   coords.filter(isValidLngLat);
 
-export const closeRing = (coords: LngLat[]): LngLat[] =>
-  coords.length > 0 ? [...coords, coords[0]] : coords;
+export const closeRing = (coords: LngLat[]): LngLat[] => {
+  if (coords.length === 0) return coords;
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) return coords;
+  return [...coords, first];
+};
 
 export default toGoogleLatLng;
