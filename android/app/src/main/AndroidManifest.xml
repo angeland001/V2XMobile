@@ -27,6 +27,7 @@
       <intent-filter>
         <action android:name="androidx.car.app.CarAppService"/>
         <category android:name="androidx.car.app.category.IOT"/>
+        <category android:name="androidx.car.app.category.POI"/>
       </intent-filter>
     </service>
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustPan" android:theme="@style/Theme.App.SplashScreen" android:exported="true">

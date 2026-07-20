@@ -19,7 +19,8 @@
 Do **not** repeatedly call `/preempt/start` while a valid session exists.
 Use heartbeat until the vehicle leaves the zone or toggle is turned OFF.
 
-## Start endpoint
+## Start endpoi
+nt
 
 **POST** `/preempt/start`
 
@@ -38,7 +39,7 @@ Use heartbeat until the vehicle leaves the zone or toggle is turned OFF.
             "request": {
               "inBoundLane": ["lane", 1],
               "signalGroup": 4
-            }
+O
           }
         ]
       }
