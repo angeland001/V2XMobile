@@ -20,7 +20,7 @@ export const API_CONFIG = {
   // Flip to false when the CUIP SDK/spat_bridge.py is down or unavailable, to
   // stop SpatWebSocketService from attempting connections and spamming
   // reconnect-error logs. The app degrades to "SPaT unavailable" everywhere.
-  SPAT_WS_ENABLED: false,
+  SPAT_WS_ENABLED: true,
 
   REDIS_MAP_ENDPOINT: 'http://10.199.1.11:9095/latest/map_events',
 

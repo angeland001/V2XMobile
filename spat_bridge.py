@@ -32,6 +32,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 import websockets
 
@@ -48,6 +49,11 @@ LOCAL_PORT = 8092
 # ── State ─────────────────────────────────────────────────────────────────────
 
 connected_clients: set = set()
+# Each connected app only ever cares about the one intersection its current
+# zone is in — it tells us which via a {"subscribe": "<cuip_slug>"} message
+# right after connecting. A client with no subscription yet receives nothing,
+# rather than the full multiplexed firehose while it's mid-handshake.
+client_subscriptions: dict = {}
 
 
 # ── Local WebSocket server ────────────────────────────────────────────────────
@@ -56,24 +62,41 @@ async def local_ws_handler(websocket, path=None):
     global connected_clients
     print(f"[SpatBridge] App connected:    {websocket.remote_address}")
     connected_clients.add(websocket)
+    client_subscriptions[websocket] = None
     try:
-        await websocket.wait_closed()
+        async for message in websocket:
+            try:
+                data = json.loads(message)
+            except Exception:
+                continue
+            if isinstance(data, dict) and "subscribe" in data:
+                subscribe_to = data["subscribe"]
+                client_subscriptions[websocket] = subscribe_to if isinstance(subscribe_to, str) else None
+                print(f"[SpatBridge] Client {websocket.remote_address} subscribed to: {client_subscriptions[websocket]}")
     finally:
         connected_clients.discard(websocket)
+        client_subscriptions.pop(websocket, None)
         print(f"[SpatBridge] App disconnected: {websocket.remote_address}")
 
 
-async def broadcast(raw: str):
+async def broadcast(raw: str, key: str | None):
     global connected_clients
     if not connected_clients:
         return
     dead = set()
     for client in list(connected_clients):
+        # No key on the message (couldn't parse it) or no subscription from
+        # this client yet — nothing to match against, so skip rather than
+        # guess and send everyone everything.
+        if key is None or client_subscriptions.get(client) != key:
+            continue
         try:
             await client.send(raw)
         except Exception:
             dead.add(client)
     connected_clients -= dead
+    for client in dead:
+        client_subscriptions.pop(client, None)
 
 
 # ── CUIP SDK source ────────────────────────────────────────────────────────────
@@ -111,19 +134,47 @@ async def cuip_sdk_reader(queue: asyncio.Queue):
 
 # ── Queue → broadcast loop ────────────────────────────────────────────────────
 
+# spat-events streams "high-frequency, with no wait times" across all ~13
+# corridor intersections at once, but the app only reads its local cache
+# every 500ms (SpatViewModel.FAST_UPDATE_INTERVAL) — forwarding faster than
+# that just burns CPU on the client (each message costs a JSON.parse) for
+# updates nobody will ever observe. Drop messages per-intersection instead of
+# queuing/coalescing them: the next one is always seconds away, never lost.
+MIN_BROADCAST_INTERVAL_S = 0.5
+
+last_broadcast_at: dict = {}
+seen_keys: set = set()
+
+
 async def broadcast_loop(queue: asyncio.Queue):
     msg_count = 0
     while True:
         raw = await queue.get()
         msg_count += 1
-        if msg_count <= 3:
-            try:
-                parsed = json.loads(raw)
-                print(f"[SpatBridge] Message #{msg_count} keys: {list(parsed.keys())}")
-                print(f"[SpatBridge] Message #{msg_count} raw: {raw}")
-            except Exception:
-                pass
-        await broadcast(raw)
+
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            parsed = None
+
+        if msg_count <= 3 and parsed is not None:
+            print(f"[SpatBridge] Message #{msg_count} keys: {list(parsed.keys())}")
+            print(f"[SpatBridge] Message #{msg_count} raw: {raw}")
+
+        key = parsed.get("intersectionID") or parsed.get("intersection") or parsed.get("intersection_name") if parsed is not None else None
+
+        if key is not None and key not in seen_keys:
+            seen_keys.add(key)
+            print(f"[SpatBridge] New intersection seen on the stream: {key}")
+
+        if key is not None:
+            now = time.monotonic()
+            last = last_broadcast_at.get(key, 0.0)
+            if now - last < MIN_BROADCAST_INTERVAL_S:
+                continue
+            last_broadcast_at[key] = now
+
+        await broadcast(raw, key)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

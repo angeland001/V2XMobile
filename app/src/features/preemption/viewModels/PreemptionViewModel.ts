@@ -17,6 +17,31 @@ export class PreemptionViewModel {
   activeZoneName: string | null = null;
   heartbeatProgress = 0; // 0–1, cycles every 1.5 s while heartbeat is running
 
+  // Phase mismatch detection: compares the signal_group we requested (from the
+  // dashboard config) against current_state, which the preempt bridge reads
+  // live off the physical controller. A persistent mismatch means the
+  // dashboard's signal_group for this zone is wrong, not that the app is
+  // misbehaving — see MOBILE_INTEGRATION.md for what current_state reports.
+  phaseMismatch = false;
+  requestedSignalGroup: number | null = null;
+  controllerSignalState: number | null = null;
+  private mismatchStreak = 0;
+  private readonly MISMATCH_STREAK_THRESHOLD = 3; // ~4.5s of heartbeats — lets the controller finish transitioning before flagging
+
+  // Snapshot of the fields above, taken when a session clears, so
+  // TrafficLightPanel can keep showing the last known state for
+  // EXIT_GRACE_MS after the vehicle actually leaves the zone — see the
+  // display* getters below. Doesn't delay the real session teardown
+  // (callClear/sessionId/heartbeat all still happen immediately).
+  private lastActiveZoneName: string | null = null;
+  private lastSsmStatus: SsmStatus = null;
+  private lastRequestedSignalGroup: number | null = null;
+  private lastControllerSignalState: number | null = null;
+  private graceClearTimeout: NodeJS.Timeout | null = null;
+  // Keep in sync with SpatViewModel's EXIT_GRACE_MS — both linger the same
+  // TrafficLightPanel render for the same window after zone exit.
+  private static readonly EXIT_GRACE_MS = 3000;
+
   private previousPosition: [number, number] | null = null;
   private wasInsideZone = false;
   private validEntry = false;
@@ -240,6 +265,10 @@ export class PreemptionViewModel {
       if (result) {
         this.sessionId = result.sessionId;
         this.ssmStatus = result.ssmStatus;
+        this.requestedSignalGroup = config.signalGroup;
+        this.controllerSignalState = null;
+        this.phaseMismatch = false;
+        this.mismatchStreak = 0;
         console.log(
           '[Preemption] START successful. Zone:',
           zone.name,
@@ -319,13 +348,60 @@ export class PreemptionViewModel {
     // Call CLEAR
     this.callClear(sessionId);
 
+    // Snapshot before clearing so the display getters can linger this state
+    // for the driver for a couple seconds after they've actually left.
+    this.lastActiveZoneName = this.activeZoneName;
+    this.lastSsmStatus = this.ssmStatus;
+    this.lastRequestedSignalGroup = this.requestedSignalGroup;
+    this.lastControllerSignalState = this.controllerSignalState;
+    this.scheduleGraceClear();
+
     // Reset session state
     this.sessionId = null;
     this.ssmStatus = null;
     this.activeZoneName = null;
     this.validEntry = false;
+    this.requestedSignalGroup = null;
+    this.controllerSignalState = null;
+    this.phaseMismatch = false;
+    this.mismatchStreak = 0;
 
     console.log('[Preemption] Session cleared');
+  }
+
+  private scheduleGraceClear(): void {
+    if (this.graceClearTimeout) {
+      clearTimeout(this.graceClearTimeout);
+    }
+    this.graceClearTimeout = setTimeout(() => {
+      this.graceClearTimeout = null;
+      runInAction(() => {
+        this.lastActiveZoneName = null;
+        this.lastSsmStatus = null;
+        this.lastRequestedSignalGroup = null;
+        this.lastControllerSignalState = null;
+      });
+    }, PreemptionViewModel.EXIT_GRACE_MS);
+  }
+
+  // Display-only variants that fall back to the pre-clear snapshot for
+  // EXIT_GRACE_MS after a session ends, so TrafficLightPanel keeps showing
+  // the driver's last known state for a couple seconds after they leave the
+  // zone instead of blanking out immediately.
+  get displayActiveZoneName(): string | null {
+    return this.activeZoneName ?? this.lastActiveZoneName;
+  }
+
+  get displaySsmStatus(): SsmStatus {
+    return this.ssmStatus ?? this.lastSsmStatus;
+  }
+
+  get displayRequestedSignalGroup(): number | null {
+    return this.requestedSignalGroup ?? this.lastRequestedSignalGroup;
+  }
+
+  get displayControllerSignalState(): number | null {
+    return this.controllerSignalState ?? this.lastControllerSignalState;
   }
 
   // ============ Config Sync ============
@@ -333,12 +409,34 @@ export class PreemptionViewModel {
   private async syncConfigsWithDashboard(): Promise<void> {
     if (this.configCache.size === 0) return;
 
-    const freshConfigs = await PreemptionConfigService.fetchAllConfigs();
-    if (freshConfigs === null) return; // skip deletion when fetch fails
-    const freshIds = new Set(freshConfigs.map((c) => c.spatZoneId));
+    // The dashboard API requires intersection_id per request, and cached zones
+    // may span more than one intersection (a tester can pass through several
+    // during a session), so fetch per intersection rather than one global call.
+    const intersectionIds = Array.from(
+      new Set(Array.from(this.configCache.values()).map((c) => c.intersectionId)),
+    );
 
-    for (const [zoneId] of this.configCache) {
-      if (!freshIds.has(zoneId)) {
+    const perIntersection = await Promise.all(
+      intersectionIds.map(async (intersectionId) => ({
+        intersectionId,
+        configs: await PreemptionConfigService.fetchAllConfigs(intersectionId),
+      })),
+    );
+
+    const freshById = new Map<string, PreemptionZoneConfig>();
+    const verifiedIntersectionIds = new Set<number>();
+
+    for (const { intersectionId, configs } of perIntersection) {
+      if (configs === null) continue; // fetch failed — skip deletion check for this intersection's zones
+      verifiedIntersectionIds.add(intersectionId);
+      for (const config of configs) {
+        freshById.set(config.spatZoneId, config);
+      }
+    }
+
+    for (const [zoneId, cached] of this.configCache) {
+      if (!verifiedIntersectionIds.has(cached.intersectionId)) continue; // couldn't verify this cycle
+      if (!freshById.has(zoneId)) {
         console.log('[Preemption] Zone config deleted from dashboard:', zoneId);
         this.configCache.delete(zoneId);
 
@@ -350,9 +448,9 @@ export class PreemptionViewModel {
     }
 
     // Refresh any cached configs that are still present
-    for (const config of freshConfigs) {
-      if (this.configCache.has(config.spatZoneId)) {
-        this.configCache.set(config.spatZoneId, config);
+    for (const [zoneId, config] of freshById) {
+      if (this.configCache.has(zoneId)) {
+        this.configCache.set(zoneId, config);
       }
     }
   }
@@ -426,6 +524,7 @@ export class PreemptionViewModel {
           if (status && status !== this.ssmStatus) {
             runInAction(() => { this.ssmStatus = status; });
           }
+          this.checkPhaseMismatch(status, data.current_state);
           return true;
         },
         { maxRetries: 2 }, // Heartbeat less critical than START
@@ -436,6 +535,52 @@ export class PreemptionViewModel {
       console.log('[API] Heartbeat failed after retries:', error);
       return false;
     }
+  }
+
+  // Flags when the controller's live phase (current_state, read off the
+  // physical signal by the preempt bridge) keeps disagreeing with the
+  // signal_group we requested (sourced from the dashboard config). A one-off
+  // mismatch is expected while the controller is still transitioning into the
+  // requested phase, so this only fires after several consecutive heartbeats
+  // disagree — a persistent mismatch means the dashboard's signal_group for
+  // this zone is wrong, not a transient timing issue.
+  private checkPhaseMismatch(status: 'granted' | 'cancelled' | undefined, currentState: unknown): void {
+    const controllerState = typeof currentState === 'number' ? currentState : null;
+
+    runInAction(() => {
+      this.controllerSignalState = controllerState;
+
+      const canCompare =
+        status === 'granted' && controllerState !== null && this.requestedSignalGroup !== null;
+
+      if (canCompare && controllerState !== this.requestedSignalGroup) {
+        this.mismatchStreak += 1;
+        if (this.mismatchStreak >= this.MISMATCH_STREAK_THRESHOLD && !this.phaseMismatch) {
+          this.phaseMismatch = true;
+          console.log(
+            `[Preemption] PHASE MISMATCH: requested signal_group ${this.requestedSignalGroup} but controller current_state is ${controllerState} — check this zone's signal_group in the dashboard`,
+          );
+        }
+      } else {
+        this.mismatchStreak = 0;
+        this.phaseMismatch = false;
+      }
+    });
+  }
+
+  // Traffic-light color derived from the preempt bridge's live controller
+  // reading, for intersections CUIP's spat-events stream doesn't cover (e.g.
+  // the lab bench controller) — the only other live source TrafficLightPanel
+  // has. current_state is a signal-group number, not a color, so this reuses
+  // the same "does it match what we requested" comparison as
+  // checkPhaseMismatch: green once the controller's active phase is the one
+  // we asked for, red otherwise. null (no light shown) until the first
+  // heartbeat reports a controller state.
+  get controllerLight(): 'red' | 'green' | null {
+    const state = this.displayControllerSignalState;
+    const requested = this.displayRequestedSignalGroup;
+    if (state === null || requested === null) return null;
+    return state === requested ? 'green' : 'red';
   }
 
   private async callClear(sessionId: string): Promise<void> {
@@ -479,6 +624,10 @@ export class PreemptionViewModel {
       this.clearSession();
     }
     this.stopHeartbeat();
+    if (this.graceClearTimeout) {
+      clearTimeout(this.graceClearTimeout);
+      this.graceClearTimeout = null;
+    }
     this.isPendingStart = false;
     this.zoneDetectionBuffer = [];
     this.configCache.clear();

@@ -16,6 +16,10 @@ export interface SpatZone {
   // expected and surfaces as "SPaT unavailable" rather than borrowing another
   // intersection's feed.
   intersectionName: string | null;
+  // Numeric intersection id from the dashboard, needed to query
+  // preemption-zone-configs (which requires intersection_id per request).
+  // undefined for the hardcoded SPAT_ZONES fallback, which predates this field.
+  intersectionId?: number;
   entryLine?: [number, number][]; // Line user crosses to enter zone
   exitLine?: [number, number][]; // Line user crosses to exit zone
 }
@@ -26,6 +30,7 @@ interface DashboardSpatZoneApiResponse {
   name: string;
   lane_ids: number[];
   signal_group: number;
+  intersection_id: number;
   polygon: { type: 'Polygon'; coordinates: [number, number][][] };
   entry_line: { type: 'LineString'; coordinates: [number, number][] };
   exit_line: { type: 'LineString'; coordinates: [number, number][] };
@@ -48,7 +53,9 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [4, 5],
     signalGroup: 2,
-    intersectionName: 'Georgia',
+    // Must be the exact CUIP corridor slug, not a fuzzy fragment — the bridge
+    // filters each connection's subscription by exact string match server-side.
+    intersectionName: 'MLK_Georgia',
     entryLine: [
       [35.045701327254704, -85.3078772725392],
       [35.04564597038842, -85.30798530743753]
@@ -70,7 +77,9 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [1],
     signalGroup: 4,
-    intersectionName: 'Georgia',
+    // Must be the exact CUIP corridor slug, not a fuzzy fragment — the bridge
+    // filters each connection's subscription by exact string match server-side.
+    intersectionName: 'MLK_Georgia',
     entryLine: [
       [35.045932689327415, -85.30813483909343],
       [35.04595040716744, -85.30823562301588]
@@ -92,7 +101,9 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [8],
     signalGroup: 4,
-    intersectionName: 'Georgia',
+    // Must be the exact CUIP corridor slug, not a fuzzy fragment — the bridge
+    // filters each connection's subscription by exact string match server-side.
+    intersectionName: 'MLK_Georgia',
     entryLine: [
       [35.04574351301403, -85.30833844397954],
       [35.045712107167205, -85.30826329917411]
@@ -114,7 +125,9 @@ export const SPAT_ZONES: SpatZone[] = [
     ],
     laneIds: [10, 11],
     signalGroup: 2,
-    intersectionName: 'Georgia',
+    // Must be the exact CUIP corridor slug, not a fuzzy fragment — the bridge
+    // filters each connection's subscription by exact string match server-side.
+    intersectionName: 'MLK_Georgia',
     entryLine: [
       [35.04586380929149, -85.30890288513018],
       [35.04566781438929, -85.30887736136788]
@@ -126,37 +139,84 @@ export const SPAT_ZONES: SpatZone[] = [
   }
 ];
 
+interface DashboardIntersectionApiResponse {
+  intersection_id: number;
+  // The intersection's identifier in CUIP's own corridor configuration (e.g.
+  // "MLK_Houston") — null for intersections CUIP doesn't carry on its
+  // spat-events stream at all (lab/bench controllers, drafts not yet wired
+  // up). Authoritative for SpatWebSocketService matching; the zone's own
+  // display `name` (often a turn instruction like "Continue Straight on MLK
+  // East Entrance") is not a reliable stand-in and is no longer used as a
+  // fallback for it.
+  cuip_slug: string | null;
+}
+
 export class SpatZoneService {
   private static zoneCache: Map<string, boolean> = new Map();
   private static dashboardZones: SpatZone[] = [];
+  private static intersectionSlugs: Map<number, string | null> = new Map();
 
   private static toLatLng(coord: [number, number]): [number, number] {
     // Dashboard/GeoJSON is [lng, lat], app movement tracking uses [lat, lng].
     return [coord[1], coord[0]];
   }
 
-  // Prefer the dashboard's own intersection name when present — it's a more
-  // reliable identity than the zone's approach name (e.g. "E 11th St - EB
-  // Approach" tells you nothing about which physical intersection it's at).
-  // Whatever comes out of this is a fuzzy-match key for SpatWebSocketService,
-  // not a guess at a specific known intersection — no live match is expected
-  // and correct for zones that aren't part of the CUIP-instrumented corridor.
+  private static async loadIntersectionSlugs(): Promise<void> {
+    try {
+      const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/intersections`;
+      const response = await fetch(endpoint, { method: 'GET' });
+      if (!response.ok) {
+        console.log(`[SPAT] Dashboard intersections fetch failed: ${response.status}`);
+        return;
+      }
+
+      const data: DashboardIntersectionApiResponse[] = await response.json();
+      if (!Array.isArray(data)) {
+        console.log('[SPAT] Dashboard intersections fetch returned non-array payload');
+        return;
+      }
+
+      this.intersectionSlugs = new Map(
+        data.map((i) => [i.intersection_id, i.cuip_slug ?? null]),
+      );
+    } catch (error) {
+      console.log('[SPAT] Dashboard intersections fetch error:', error);
+    }
+  }
+
+  // Resolves the CUIP-authoritative match key for a zone's intersection.
+  // Returns null when the intersection has no cuip_slug — meaning CUIP
+  // doesn't carry this intersection on its spat-events stream at all (e.g. a
+  // lab/bench controller), as opposed to a real corridor intersection that
+  // simply has no live message right now. That distinction is what lets
+  // SpatViewModel tell "never going to have coverage" apart from "should have
+  // coverage but doesn't right now" (see SpatViewModel.hasCuipCoverage).
+  //
+  // cuip_slug takes priority: it's confirmed to match the live stream's
+  // intersection field exactly (e.g. "MLK_Houston"), which matters now that
+  // SpatWebSocketService sends it as an exact-match subscription filter to
+  // the bridge — an imprecise value here means zero data, not a degraded
+  // fuzzy match. z.intersection_name's format is unconfirmed, so it's only a
+  // fallback for intersections not yet in the dashboard's intersections table.
   private static resolveIntersectionName(z: DashboardSpatZoneApiResponse): string | null {
+    const slug = typeof z.intersection_id === 'number' ? this.intersectionSlugs.get(z.intersection_id) : null;
+    if (slug && slug.trim()) return slug.trim();
     if (z.intersection_name && z.intersection_name.trim()) return z.intersection_name.trim();
-    if (z.name && z.name.trim()) return z.name.trim();
     return null;
   }
 
   static async loadZonesFromDashboard(): Promise<void> {
     try {
-      const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/spat-zones`;
-      const response = await fetch(endpoint, { method: 'GET' });
-      if (!response.ok) {
-        console.log(`[SPAT] Dashboard zone fetch failed: ${response.status}`);
+      const [zonesResponse] = await Promise.all([
+        fetch(`${API_CONFIG.DASHBOARD_API_URL}/api/spat-zones`, { method: 'GET' }),
+        this.loadIntersectionSlugs(),
+      ]);
+      if (!zonesResponse.ok) {
+        console.log(`[SPAT] Dashboard zone fetch failed: ${zonesResponse.status}`);
         return;
       }
 
-      const data: DashboardSpatZoneApiResponse[] = await response.json();
+      const data: DashboardSpatZoneApiResponse[] = await zonesResponse.json();
       if (!Array.isArray(data)) {
         console.log('[SPAT] Dashboard zone fetch returned non-array payload');
         return;
@@ -170,6 +230,7 @@ export class SpatZoneService {
           polygon: z.polygon.coordinates[0],
           laneIds: Array.isArray(z.lane_ids) ? z.lane_ids : [],
           signalGroup: z.signal_group,
+          intersectionId: typeof z.intersection_id === 'number' ? z.intersection_id : undefined,
           intersectionName: this.resolveIntersectionName(z),
           entryLine: z.entry_line.coordinates.map((c) => this.toLatLng(c as [number, number])) as [number, number][],
           exitLine: z.exit_line.coordinates.map((c) => this.toLatLng(c as [number, number])) as [number, number][],

@@ -5,8 +5,8 @@ import type {
 } from '../models/PreemptionModels';
 
 export class PreemptionConfigService {
-  static async fetchAllConfigs(): Promise<PreemptionZoneConfig[] | null> {
-    const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/preemption-zone-configs`;
+  static async fetchAllConfigs(intersectionId: number): Promise<PreemptionZoneConfig[] | null> {
+    const endpoint = `${API_CONFIG.DASHBOARD_API_URL}/api/preemption-zone-configs?intersection_id=${intersectionId}`;
     try {
       const response = await fetch(endpoint, { method: 'GET' });
       if (!response.ok) return null;

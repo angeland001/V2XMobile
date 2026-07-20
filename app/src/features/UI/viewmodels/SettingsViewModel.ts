@@ -5,7 +5,7 @@ export class SettingsViewModel {
   regulatoryAlerts = true;
   informationalAlerts = true;
   showVehicles = true;
-  showLanes = true;
+  showLanes = false;
 
   constructor() {
     makeAutoObservable(this);
