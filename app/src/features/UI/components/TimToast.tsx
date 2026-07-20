@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -147,10 +147,19 @@ interface TimToastProps {
 const NAV_BANNER_GAP = 16;
 const AMBIENT_TOP_OFFSET = 90;
 const MAX_VISIBLE = 2;
+// Small margin off the true bottom edge — the same footprint the tab bar
+// occupied before it hides for navigation (it sat flush at bottom: 0).
+const BOTTOM_CENTER_MARGIN = 12;
 
 export const TimToast: React.FC<TimToastProps> = observer(
   ({ timService, routeViewModel, settingsViewModel, isNavigating = false }) => {
     const insets = useSafeAreaInsets();
+    const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+    // Same wide-car-display detection used across the nav HUD (see
+    // NavigationBanner) — on a car display TIM alerts dock bottom-center
+    // instead of stacking under the nav banner, clear of the recenter
+    // button/status toast MapView renders in that same bottom-center spot.
+    const isWide = screenWidth > screenHeight * 1.3;
     // Nav-mode cards are persistent (computed fresh from the route each tick,
     // not a dismissable queue) — track user-dismissed keys locally so a tap
     // can hide one without waiting for the user to enter or leave the zone.
@@ -222,12 +231,13 @@ export const TimToast: React.FC<TimToastProps> = observer(
       ? routeViewModel.navBannerHeightPx + NAV_BANNER_GAP
       : insets.top + AMBIENT_TOP_OFFSET;
 
+    const positionStyle = isWide
+      ? { bottom: insets.bottom + BOTTOM_CENTER_MARGIN, left: (screenWidth - CARD_WIDTH) / 2 }
+      : { top: baseTop + routeViewModel.topHudExtraPx, left: 12 };
+
     return (
       <View
-        style={[
-          styles.container,
-          { top: baseTop + routeViewModel.topHudExtraPx },
-        ]}
+        style={[styles.container, positionStyle]}
         pointerEvents="box-none"
       >
         {items.map((item) => (
@@ -258,7 +268,7 @@ const CARD_WIDTH = 280;
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 12,
+    // left is supplied dynamically — see `positionStyle` in the component
     width: CARD_WIDTH,
     gap: 8,
     zIndex: 9999,
