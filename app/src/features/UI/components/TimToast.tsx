@@ -218,11 +218,15 @@ export const TimToast: React.FC<TimToastProps> = observer(
       setDismissedKeys((prev) => new Set(prev).add(key));
     };
 
+    const baseTop = isNavigating
+      ? routeViewModel.navBannerHeightPx + NAV_BANNER_GAP
+      : insets.top + AMBIENT_TOP_OFFSET;
+
     return (
       <View
         style={[
           styles.container,
-          { top: isNavigating ? routeViewModel.navBannerHeightPx + NAV_BANNER_GAP : insets.top + AMBIENT_TOP_OFFSET },
+          { top: baseTop + routeViewModel.topHudExtraPx },
         ]}
         pointerEvents="box-none"
       >
