@@ -1,9 +1,9 @@
-import React, { useCallback } from 'react';
-import { TouchableOpacity, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef } from 'react';
+import { TouchableOpacity, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { NavigationContainer } from '@react-navigation/native';
 import { NavigationIndependentTree } from '@react-navigation/core';
-import { CurvedBottomBarExpo } from 'react-native-curved-bottom-bar';
+import { CurvedBottomBarExpo, ICurvedBottomBarRef } from 'react-native-curved-bottom-bar';
 import { observer } from 'mobx-react-lite';
 import { MainScreen } from './src/Main/views/screens/MainScreen';
 import { MainViewModel } from './src/Main/viewmodels/MainViewModel';
@@ -48,13 +48,33 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
 
   const unread = viewModel.timService.unreadAlertCount;
 
+  // The tab bar (Route/Alerts/Settings + map circle) only gets in the way
+  // while turn-by-turn is active — hide it for the extra screen height, and
+  // bring it back the moment navigation ends.
+  const navigatorRef = useRef<ICurvedBottomBarRef | null>(null);
+  const isNavigating = viewModel.routeViewModel.isNavigating;
+  useEffect(() => {
+    navigatorRef.current?.setVisible(!isNavigating);
+  }, [isNavigating]);
+
+  // Same wide-car-display detection used across the nav HUD (see
+  // NavigationBanner). There the bar defaults to the full window width,
+  // which stretches an already-roomy 4-item tab bar edge to edge — cap it
+  // to a phone-like width and let the library's own alignSelf: 'center'
+  // handle keeping it centered.
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const isWide = screenWidth > screenHeight * 1.3;
+  const navBarWidth = isWide ? Math.min(440, screenWidth - 32) : undefined;
+
   return (
     <NavigationIndependentTree>
       <NavigationContainer>
         <CurvedBottomBarExpo.Navigator
+          ref={navigatorRef}
           type="DOWN"
           initialRouteName="map"
           bgColor={BAR_COLOR}
+          width={navBarWidth}
           circleWidth={60}
           height={65}
           borderTopLeftRight

@@ -1,15 +1,23 @@
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
 
 interface PreemptionToggleProps {
   enabled: boolean;
   onToggle: (enabled: boolean) => void;
-  navOffset?: number;
+  top: number;
+  // Docks top-right instead of top-left — used on wide car displays while
+  // navigating, where it stacks under the ETA chip instead of sitting over
+  // on the left where the traffic light panel needs the room.
+  dockRight?: boolean;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
-export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onToggle, navOffset = 0 }) => {
+export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onToggle, top, dockRight = false, onLayout }) => {
   return (
-    <View style={[styles.container, { top: 30 + navOffset }]}>
+    <View
+      style={[styles.container, dockRight ? styles.containerRight : styles.containerLeft, { top }]}
+      onLayout={onLayout}
+    >
       <Text style={styles.label}>Auto Preemption</Text>
       <Pressable
         style={[styles.toggle, enabled ? styles.toggleOn : styles.toggleOff]}
@@ -24,10 +32,15 @@ export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onT
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    left: 26,
     zIndex: 1200,
     alignItems: 'center',
     gap: 8,
+  },
+  containerLeft: {
+    left: 26,
+  },
+  containerRight: {
+    right: 16,
   },
   label: {
     color: '#ffffff',

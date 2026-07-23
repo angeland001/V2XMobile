@@ -1,7 +1,8 @@
 // app/src/features/Map/views/components/MapView.tsx
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, LayoutChangeEvent, useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { reaction } from "mobx";
 import MapboxGL from "@rnmapbox/maps";
 import { Ionicons } from '@expo/vector-icons';
@@ -34,6 +35,8 @@ import { SignalState } from "../../../SpatService/models/SpatModels";
 import { closeRing, normalizeToLngLat, type LngLat } from "../../../../core/maps/coordinates";
 import { NavigationBanner } from "../../../Route/components/NavigationBanner";
 import { NavigationSummaryBar } from "../../../Route/components/NavigationSummaryBar";
+import { TAB_BAR_HEIGHT } from "../../../UI/theme";
+import { useStackedOffset } from "../../hooks/useStackedOffset";
 
 MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
@@ -183,13 +186,15 @@ type AnyDetector =
 
 interface PedestrianWarningProps {
   activeDetector: AnyDetector | null;
+  top: number;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
 const PedestrianWarning: React.FC<PedestrianWarningProps> = observer(
-  ({ activeDetector }) => {
+  ({ activeDetector, top, onLayout }) => {
     if (!activeDetector?.isVehicleNearPedestrianInCrosswalk) return null;
     return (
-      <View style={styles.warningContainer}>
+      <View style={[styles.warningContainer, { top }]} onLayout={onLayout}>
         <Text style={styles.warningText}>
           ⚠️ Pedestrian crossing detected ahead!
         </Text>
@@ -381,8 +386,23 @@ const MAPBOX_STYLES = {
   streets: MapboxGL.StyleURL.Street,
 } as const;
 
-// How far bottom UI elements shift up to clear the NavigationSummaryBar
-const NAV_SUMMARY_OFFSET = 70;
+// Stable (module-level) stacking orders for useStackedOffset — each entry
+// is a key naming one member of that region's vertical stack, outermost/
+// closest-to-anchor first.
+const TOP_RIGHT_ORDER = ["legend"] as const;
+// ZoomControls' own button column: fixed width (its buttons are a constant
+// 44px), right-anchored 16px from the edge — MapOverlayMenu docks directly
+// to its left using this known geometry rather than a measured stack, since
+// ZoomControls' width never varies.
+const ZOOM_CONTROLS_RIGHT_MARGIN = 16;
+const ZOOM_CONTROLS_BUTTON_WIDTH = 44;
+const OVERLAY_MENU_GAP = 10;
+const OVERLAY_MENU_BOTTOM = 110;
+const BOTTOM_CENTER_ORDER = ["recenter", "toast"] as const;
+// Top-right stack while navigating on a wide car display: ETA chip lined up
+// with the nav banner, Auto Preemption stacked below it — keeps both clear
+// of the traffic light panel on the left instead of colliding with it.
+const NAV_TOP_RIGHT_ORDER = ["etaBanner", "preemptionToggle"] as const;
 
 // Ease duration for the per-fix nav camera follow update. Longer than the
 // 50ms throttle interval so each new setCamera call overrides the previous
@@ -462,6 +482,51 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     }, []);
 
+    // ── Navigation-mode HUD stacking ──────────────────────────────────────
+    // Every overlay below docks from a *measured* sibling height (via
+    // useStackedOffset / the NavigationBanner + NavigationSummaryBar height
+    // reported onto RouteViewModel) instead of a guessed pixel offset, so
+    // nothing collides when a widget grows — longer route text, a larger
+    // accessibility font size, or a different screen/aspect ratio.
+    const insets = useSafeAreaInsets();
+    const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+    // Same wide-car-display detection as NavigationBanner — see its comment.
+    const isWide = screenWidth > screenHeight * 1.3;
+    const topRightStack = useStackedOffset(TOP_RIGHT_ORDER, 12);
+    const bottomCenterStack = useStackedOffset(BOTTOM_CENTER_ORDER, 10);
+    const navTopRightStack = useStackedOffset(NAV_TOP_RIGHT_ORDER, 10);
+    const [pedestrianWarningHeight, setPedestrianWarningHeight] = useState(0);
+
+    // Legend/overlay menu only ever render while NOT navigating (see below),
+    // so this base never needs to account for the nav banner.
+    const topRightBase = 16;
+    // The tab bar is hidden while navigating (see MainNavigator), so the
+    // bottom-center stack (recenter button, status toast) only needs to
+    // clear it when the tab bar is actually on screen.
+    const bottomCenterBaseline = isNavigating ? 20 : TAB_BAR_HEIGHT + 20;
+    // On a wide car display the ETA chip lines up with the nav banner's own
+    // top edge (both float at the same insets.top + 10); on a phone the
+    // banner spans the full width, so the chip docks below it instead.
+    const etaBannerTop = isWide ? insets.top + 10 : navBannerHeight + 10;
+    // Auto Preemption only relocates to the right (stacked under the ETA
+    // chip) while navigating on a wide display — that's the one case where
+    // it collides with the traffic light panel on the left. Otherwise it
+    // keeps its original top-left spot.
+    const preemptionDockRight = isWide && isNavigating;
+    const preemptionTop = preemptionDockRight
+      ? navTopRightStack.offsetFor('preemptionToggle', etaBannerTop)
+      : 30 + (isNavigating ? navBannerHeight : 0);
+
+    // Recenter button unmounts as soon as the user stops panning away — clear
+    // its recorded height so the toast (stacked above it) collapses back
+    // down instead of leaving a stale gap where the button used to be.
+    useEffect(() => {
+      if (!(isNavigating && isUserPanningAway)) {
+        bottomCenterStack.resetHeight('recenter');
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isNavigating, isUserPanningAway]);
+
     const handleZoomIn = () => {
       zoomLevelRef.current = Math.min(zoomLevelRef.current + 1, 22);
       cameraRef.current?.setCamera({ zoomLevel: zoomLevelRef.current, animationDuration: 300 });
@@ -518,6 +583,25 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const activeDetector = isTestingMode
       ? testingPedestrianDetectorViewModel
       : pedestrianDetectorViewModel;
+
+    // PedestrianWarning docks directly below the nav banner (or near the top
+    // when not navigating) and reports its own height onto RouteViewModel so
+    // TimToast — mounted outside this component's tree at the app root —
+    // can stack below it instead of rendering on top of it.
+    const pedestrianWarningVisible = !!activeDetector?.isVehicleNearPedestrianInCrosswalk;
+    const pedestrianWarningTop = isNavigating ? navBannerHeight + 12 : insets.top + 60;
+
+    useEffect(() => {
+      const routeVM = mainViewModel?.routeViewModel;
+      if (!routeVM) return;
+      routeVM.setTopHudExtraPx(pedestrianWarningVisible ? pedestrianWarningHeight + 12 : 0);
+    }, [mainViewModel, pedestrianWarningVisible, pedestrianWarningHeight]);
+
+    useEffect(() => {
+      return () => { mainViewModel?.routeViewModel?.setTopHudExtraPx(0); };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const SHOW_SDSM_VEHICLES = true;
 
     const shouldShowSDSMForViewModel = (
@@ -899,42 +983,71 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           />
         )}
 
-        <MapLegend navOffset={isNavigating ? navBannerHeight : 0} />
+        {/* Legend stays top-right. Overlay menu (dark mode/layers) now docks
+            bottom-right, adjacent to and left of the zoom controls, instead
+            of stacking above them — they used to collide on a short car
+            display when both grew tall enough to meet in the middle. Both
+            are dropped entirely while navigating; neither is essential
+            while turn-by-turn is driving the map. */}
+        {!isNavigating && (
+          <>
+            <MapLegend
+              top={topRightStack.offsetFor('legend', topRightBase)}
+              onLayout={topRightStack.onLayout('legend')}
+            />
+            <MapOverlayMenu
+              isDarkMode={isDarkMode}
+              onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
+              onCycleLayer={cycleMapLayer}
+              bottom={OVERLAY_MENU_BOTTOM}
+              right={ZOOM_CONTROLS_RIGHT_MARGIN + ZOOM_CONTROLS_BUTTON_WIDTH + OVERLAY_MENU_GAP}
+            />
+          </>
+        )}
+
         <ZoomControls
           onZoomIn={handleZoomIn}
           onZoomOut={handleZoomOut}
           onLocateUser={handleLocateUser}
-          navOffset={isNavigating ? NAV_SUMMARY_OFFSET : 0}
         />
 
         <PreemptionToggle
           enabled={preemptionViewModel.isEnabled}
           onToggle={(enabled) => { preemptionViewModel.toggleEnabled(enabled); }}
-          navOffset={isNavigating ? navBannerHeight : 0}
-        />
-        <MapOverlayMenu
-          isDarkMode={isDarkMode}
-          onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
-          onCycleLayer={cycleMapLayer}
-          navOffset={isNavigating ? navBannerHeight : 0}
+          top={preemptionTop}
+          dockRight={preemptionDockRight}
+          onLayout={navTopRightStack.onLayout('preemptionToggle')}
         />
 
-        {toastMsg !== null && (
-          <View style={styles.toast} pointerEvents="none">
-            <Text style={styles.toastText}>{toastMsg}</Text>
-          </View>
-        )}
+        <PedestrianWarning
+          activeDetector={activeDetector ?? null}
+          top={pedestrianWarningTop}
+          onLayout={(e) => setPedestrianWarningHeight(e.nativeEvent.layout.height)}
+        />
 
-        {/* Recenter button — appears when user pans away during navigation */}
+        {/* Bottom-center stack: recenter button closest to the summary bar,
+            status toast above it — offset by the recenter button's real
+            measured height so the toast never overlaps it. */}
         {isNavigating && isUserPanningAway && (
           <TouchableOpacity
-            style={styles.recenterBtn}
+            style={[styles.recenterBtn, { bottom: bottomCenterStack.offsetFor('recenter', bottomCenterBaseline) }]}
+            onLayout={bottomCenterStack.onLayout('recenter')}
             onPress={handleLocateUser}
             activeOpacity={0.85}
           >
             <Ionicons name="locate" size={18} color="#fff" />
             <Text style={styles.recenterText}>Recenter</Text>
           </TouchableOpacity>
+        )}
+
+        {toastMsg !== null && (
+          <View
+            style={[styles.toast, { bottom: bottomCenterStack.offsetFor('toast', bottomCenterBaseline) }]}
+            onLayout={bottomCenterStack.onLayout('toast')}
+            pointerEvents="none"
+          >
+            <Text style={styles.toastText}>{toastMsg}</Text>
+          </View>
         )}
 
         <MapboxGL.MapView
@@ -1063,15 +1176,14 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             // time a preemption session has one. Prefer it over showing nothing.
             preemptionViewModel.controllerLight
           }
-          navOffset={isNavigating ? NAV_SUMMARY_OFFSET : 0}
         />
-
-        <PedestrianWarning activeDetector={activeDetector ?? null} />
 
         {routeVM && (
           <NavigationSummaryBar
             routeViewModel={routeVM}
             onOverviewToggle={() => routeVM.toggleOverviewMode()}
+            top={navTopRightStack.offsetFor('etaBanner', etaBannerTop)}
+            onLayout={navTopRightStack.onLayout('etaBanner')}
           />
         )}
       </View>
@@ -1102,7 +1214,7 @@ const styles = StyleSheet.create({
   },
   toast: {
     position: 'absolute',
-    bottom: 180,
+    // bottom is supplied dynamically — see bottomCenterStack.offsetFor('toast', ...)
     alignSelf: 'center',
     backgroundColor: 'rgba(15, 23, 42, 0.88)',
     paddingHorizontal: 18,
@@ -1117,7 +1229,7 @@ const styles = StyleSheet.create({
   },
   recenterBtn: {
     position: 'absolute',
-    bottom: 160,
+    // bottom is supplied dynamically — see bottomCenterStack.offsetFor('recenter', ...)
     alignSelf: 'center',
     backgroundColor: '#FF8C00',
     flexDirection: 'row',
@@ -1140,7 +1252,7 @@ const styles = StyleSheet.create({
   },
   warningContainer: {
     position: "absolute",
-    top: 110,  // below NavigationBanner when navigating
+    // top is supplied dynamically — see the `top` prop on PedestrianWarning
     left: 20,
     right: 20,
     backgroundColor: "rgba(255, 59, 48, 0.9)",

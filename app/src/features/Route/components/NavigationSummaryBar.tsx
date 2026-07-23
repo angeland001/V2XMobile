@@ -1,34 +1,34 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { LayoutChangeEvent, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
 import { RouteViewModel } from '../viewmodels/RouteViewModel';
-import { TAB_BAR_HEIGHT } from '../../UI/theme';
 
 interface Props {
   routeViewModel: RouteViewModel;
   onOverviewToggle: () => void;
+  top: number;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
+// A small corner chip, not a bar spanning the screen — it only needs to
+// carry the ETA/distance and the two nav controls (overview toggle, end).
+// Positioning is fully parent-controlled (see MapView.tsx): on a wide car
+// display it lines up top-right alongside the nav banner; on a phone it
+// docks below it instead, since the banner spans the full width there.
 export const NavigationSummaryBar: React.FC<Props> = observer(
-  ({ routeViewModel, onOverviewToggle }) => {
+  ({ routeViewModel, onOverviewToggle, top, onLayout }) => {
     if (!routeViewModel.isNavigating) return null;
 
     const arrived = routeViewModel.hasArrived;
 
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, { top }]} onLayout={onLayout}>
         {arrived ? (
-          // Arrived layout
-          <View style={styles.arrivedRow}>
-            <View style={styles.arrivedLeft}>
-              <Ionicons name="checkmark-circle" size={24} color="#22C55E" />
-              <View>
-                <Text style={styles.arrivedTitle}>You have arrived</Text>
-                <Text style={styles.arrivedSub} numberOfLines={1}>
-                  {routeViewModel.toLabel}
-                </Text>
-              </View>
+          <>
+            <View style={styles.arrivedRow}>
+              <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
+              <Text style={styles.arrivedTitle} numberOfLines={1}>Arrived</Text>
             </View>
             <TouchableOpacity
               style={styles.endBtn}
@@ -37,57 +37,36 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
             >
               <Text style={styles.endBtnText}>Done</Text>
             </TouchableOpacity>
-          </View>
+          </>
         ) : (
-          // Active navigation layout
-          <View style={styles.row}>
-            {/* Time + ETA */}
-            <View style={styles.statBlock}>
-              <Text style={styles.statValue}>
-                {routeViewModel.remainingDurationFormatted}
-              </Text>
-              <Text style={styles.statLabel}>
-                {routeViewModel.estimatedArrivalTime
-                  ? `ETA ${routeViewModel.estimatedArrivalTime}`
-                  : 'ETA —'}
-              </Text>
+          <>
+            <View style={styles.statsRow}>
+              <Text style={styles.statValue}>{routeViewModel.remainingDurationFormatted}</Text>
+              <Text style={styles.statSep}>·</Text>
+              <Text style={styles.statValue}>{routeViewModel.remainingDistanceFormatted}</Text>
             </View>
-
-            <View style={styles.divider} />
-
-            {/* Distance */}
-            <View style={styles.statBlock}>
-              <Text style={styles.statValue}>
-                {routeViewModel.remainingDistanceFormatted}
-              </Text>
-              <Text style={styles.statLabel}>remaining</Text>
+            <View style={styles.actionsRow}>
+              <TouchableOpacity
+                style={styles.iconBtn}
+                onPress={onOverviewToggle}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={routeViewModel.isOverviewMode ? 'navigate' : 'map-outline'}
+                  size={13}
+                  color={routeViewModel.isOverviewMode ? '#FF8C00' : 'rgba(26,26,46,0.5)'}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.endBtn}
+                onPress={() => routeViewModel.clearRoute()}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="close" size={11} color="#fff" />
+                <Text style={styles.endBtnText}>End</Text>
+              </TouchableOpacity>
             </View>
-
-            <View style={styles.spacer} />
-
-            {/* Overview toggle */}
-            <TouchableOpacity
-              style={styles.iconBtn}
-              onPress={onOverviewToggle}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={routeViewModel.isOverviewMode ? 'navigate' : 'map-outline'}
-                size={20}
-                color={routeViewModel.isOverviewMode ? '#FF8C00' : 'rgba(26,26,46,0.5)'}
-              />
-            </TouchableOpacity>
-
-            {/* End navigation */}
-            <TouchableOpacity
-              style={styles.endBtn}
-              onPress={() => routeViewModel.clearRoute()}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="close" size={16} color="#fff" />
-              <Text style={styles.endBtnText}>End</Text>
-            </TouchableOpacity>
-          </View>
+          </>
         )}
       </View>
     );
@@ -97,54 +76,46 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    bottom: TAB_BAR_HEIGHT + 4,
-    left: 12,
-    right: 12,
+    right: 16,
+    minWidth: 128,
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    gap: 6,
     zIndex: 2000,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
     elevation: 10,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.06)',
   },
-  row: {
+  statsRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  statBlock: {
-    alignItems: 'flex-start',
+    alignItems: 'baseline',
+    gap: 5,
   },
   statValue: {
-    fontSize: 20,
+    fontSize: 14,
     fontWeight: '800',
     color: '#1A1A2E',
-    letterSpacing: -0.3,
+    letterSpacing: -0.2,
   },
-  statLabel: {
-    fontSize: 11,
-    color: 'rgba(26,26,46,0.45)',
-    fontWeight: '500',
-    marginTop: 1,
+  statSep: {
+    fontSize: 12,
+    color: 'rgba(26,26,46,0.3)',
   },
-  divider: {
-    width: 1,
-    height: 32,
-    backgroundColor: 'rgba(26,26,46,0.1)',
-  },
-  spacer: {
-    flex: 1,
+  actionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   iconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 10,
+    width: 24,
+    height: 24,
+    borderRadius: 7,
     backgroundColor: '#F2F3F5',
     alignItems: 'center',
     justifyContent: 'center',
@@ -152,43 +123,26 @@ const styles = StyleSheet.create({
   endBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: '#EF4444',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    shadowColor: '#EF4444',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 6,
-    elevation: 4,
+    borderRadius: 7,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
   },
   endBtnText: {
     color: '#fff',
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '700',
   },
-  // Arrived
   arrivedRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  arrivedLeft: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    gap: 6,
   },
   arrivedTitle: {
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '700',
     color: '#1A1A2E',
-  },
-  arrivedSub: {
-    fontSize: 12,
-    color: 'rgba(26,26,46,0.45)',
-    marginTop: 2,
   },
 });
 

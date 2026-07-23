@@ -1,5 +1,5 @@
 import React from "react";
-import { View, StyleSheet } from "react-native";
+import { View, StyleSheet, LayoutChangeEvent } from "react-native";
 import { DarkModeButton } from "./mapoverlay/DarkModeButton";
 import { LayersButton } from "./mapoverlay/LayersButton";
 
@@ -7,17 +7,24 @@ interface MapOverlayMenuProps {
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
   onCycleLayer: () => void;
-  navOffset?: number;
+  // Docks bottom-right, adjacent to (left of) the zoom controls, rather than
+  // stacking above them — both fully parent-controlled so they sit on the
+  // same baseline as one cluster instead of colliding on a short screen.
+  bottom: number;
+  right: number;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
 export const MapOverlayMenu: React.FC<MapOverlayMenuProps> = ({
   isDarkMode,
   onToggleDarkMode,
   onCycleLayer,
-  navOffset = 0,
+  bottom,
+  right,
+  onLayout,
 }) => {
   return (
-    <View style={[styles.topRight, { top: 80 + navOffset }]}>
+    <View style={[styles.container, { bottom, right }]} onLayout={onLayout}>
       <DarkModeButton isDarkMode={isDarkMode} onToggle={onToggleDarkMode} />
       <View style={styles.buttonGap} />
       <LayersButton onPress={onCycleLayer} />
@@ -26,9 +33,8 @@ export const MapOverlayMenu: React.FC<MapOverlayMenuProps> = ({
 };
 
 const styles = StyleSheet.create({
-  topRight: {
+  container: {
     position: "absolute",
-    right: 16,
     zIndex: 100,
   },
   buttonGap: {

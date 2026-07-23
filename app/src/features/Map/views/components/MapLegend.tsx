@@ -1,14 +1,15 @@
 // app/src/features/Map/views/components/MapLegend.tsx
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
 
 interface MapLegendProps {
-  navOffset?: number;
+  top: number;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
-export const MapLegend: React.FC<MapLegendProps> = ({ navOffset = 0 }) => {
+export const MapLegend: React.FC<MapLegendProps> = ({ top, onLayout }) => {
   return (
-    <View style={[styles.container, { top: 16 + navOffset }]}>
+    <View style={[styles.container, { top }]} onLayout={onLayout}>
       <View style={styles.legendItem}>
         <View style={styles.vehicleIcon}>
           <View style={styles.vehicleIconInner} />

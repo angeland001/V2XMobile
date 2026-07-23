@@ -94,6 +94,11 @@ export class RouteViewModel {
   // overlay positioned below it — even ones mounted outside MapView's tree,
   // like TimToast — can clear it without guessing a fixed offset.
   navBannerHeightPx: number = 130;
+  // Extra vertical space MapView reserves directly below the nav banner for
+  // its own top-docked HUD elements (currently just the pedestrian warning).
+  // TimToast, mounted outside MapView's tree at the app root, adds this to
+  // its own offset so it stacks below those elements instead of over them.
+  topHudExtraPx: number = 0;
 
   // ── V2X analysis ──────────────────────────────────────────────────────────
   timHits: TimHit[] = [];
@@ -184,6 +189,7 @@ export class RouteViewModel {
   setShowSuggestions(show: boolean): void { this.showSuggestions = show; }
   clearSuggestions(): void { this.toSuggestions = []; this.showSuggestions = false; }
   setNavBannerHeightPx(height: number): void { this.navBannerHeightPx = height; }
+  setTopHudExtraPx(height: number): void { this.topHudExtraPx = height; }
 
   selectToSuggestion(s: GeocodingSuggestion): void {
     this.toCoord = s.center;
