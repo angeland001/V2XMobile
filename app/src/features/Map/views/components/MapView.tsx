@@ -1162,9 +1162,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           // fallback below has something to show instead — a colored light
           // next to an "unavailable" label would be a contradiction.
           spatUnavailable={spatViewModel.displaySpatUnavailable && preemptionViewModel.controllerLight === null}
-          phaseMismatch={preemptionViewModel.phaseMismatch}
-          requestedSignalGroup={preemptionViewModel.displayRequestedSignalGroup}
-          controllerSignalState={preemptionViewModel.displayControllerSignalState}
           activeLight={
             spatViewModel.displaySignalState === SignalState.GREEN ? 'green' :
             spatViewModel.displaySignalState === SignalState.RED ? 'red' :

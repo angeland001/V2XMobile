@@ -48,6 +48,16 @@ export class SpatViewModel {
   private readonly FAST_UPDATE_INTERVAL = 500;
   private readonly ZONE_CHECK_THROTTLE = 100;
 
+  // GPS Debounce: require 3 consecutive samples agreeing on the same zone
+  // before switching currentZone (and the WS connect/disconnect it drives).
+  // Without this, noisy GPS right at a zone boundary — exactly where an
+  // active preemption session lives — flickers currentZone in and out,
+  // tearing down and reconnecting the spat-events socket on every wobble and
+  // leaving SPaT data unavailable until a fresh message arrives. Mirrors
+  // PreemptionViewModel's zoneDetectionBuffer.
+  private zoneDetectionBuffer: string[] = [];
+  private readonly DEBOUNCE_SAMPLE_COUNT = 3;
+
   constructor() {
     makeAutoObservable(this);
   }
@@ -119,9 +129,20 @@ export class SpatViewModel {
 
   private checkZoneAndUpdateState(): void {
     const newZone = SpatZoneService.findZoneForPosition(this.userPosition, this.preferredZoneIds);
+    const newZoneId = newZone?.id ?? 'none';
 
-    if (newZone?.id !== this.currentZone?.id) {
+    this.zoneDetectionBuffer.push(newZoneId);
+    if (this.zoneDetectionBuffer.length > this.DEBOUNCE_SAMPLE_COUNT) {
+      this.zoneDetectionBuffer.shift();
+    }
+
+    const allSamplesMatch =
+      this.zoneDetectionBuffer.length === this.DEBOUNCE_SAMPLE_COUNT &&
+      this.zoneDetectionBuffer.every((id) => id === this.zoneDetectionBuffer[0]);
+
+    if (allSamplesMatch && newZoneId !== (this.currentZone?.id ?? 'none')) {
       this.currentZone = newZone;
+      this.zoneDetectionBuffer = [];
 
       if (newZone) {
         this.enterZone(newZone);
@@ -341,6 +362,7 @@ export class SpatViewModel {
     this.currentZone = null;
     this.previousPosition = null;
     this.zoneDisplayState.clear();
+    this.zoneDetectionBuffer = [];
 
     if (this.graceClearTimeout) {
       clearTimeout(this.graceClearTimeout);

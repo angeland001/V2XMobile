@@ -48,6 +48,17 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
             <View style={styles.actionsRow}>
               <TouchableOpacity
                 style={styles.iconBtn}
+                onPress={() => routeViewModel.toggleVoiceGuidance()}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={routeViewModel.voiceGuidanceEnabled ? 'volume-high' : 'volume-mute'}
+                  size={13}
+                  color={routeViewModel.voiceGuidanceEnabled ? '#FF8C00' : 'rgba(26,26,46,0.5)'}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.iconBtn}
                 onPress={onOverviewToggle}
                 activeOpacity={0.7}
               >
