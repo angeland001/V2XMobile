@@ -90,6 +90,7 @@ export class RouteViewModel {
   totalDurationS: number = 0;
   hasArrived: boolean = false;
   isOverviewMode: boolean = false;
+  voiceGuidanceEnabled: boolean = true;
   // Measured height of NavigationBanner (from its onLayout), shared so any
   // overlay positioned below it — even ones mounted outside MapView's tree,
   // like TimToast — can clear it without guessing a fixed offset.
@@ -136,6 +137,12 @@ export class RouteViewModel {
 
   get nextStep(): RouteStep | null {
     return this.steps[this.currentStepIndex + 1] ?? null;
+  }
+
+  // The step after the upcoming maneuver — used for the "Then: ..." preview,
+  // one further out than nextStep (the upcoming maneuver itself).
+  get stepAfterNext(): RouteStep | null {
+    return this.steps[this.currentStepIndex + 2] ?? null;
   }
 
   get distanceToManeuverFormatted(): string {
@@ -276,12 +283,21 @@ export class RouteViewModel {
     this.currentStepIndex = 0;
     this._announcedKeys.clear();
     if (this.steps.length > 0) {
-      VoiceGuidanceService.announce(this.steps[0].instruction);
+      this.announce(this.steps[0].instruction);
     }
   }
 
   toggleOverviewMode(): void {
     this.isOverviewMode = !this.isOverviewMode;
+  }
+
+  toggleVoiceGuidance(): void {
+    this.voiceGuidanceEnabled = !this.voiceGuidanceEnabled;
+    if (!this.voiceGuidanceEnabled) VoiceGuidanceService.stop();
+  }
+
+  private announce(text: string): void {
+    if (this.voiceGuidanceEnabled) VoiceGuidanceService.announce(text);
   }
 
   // ── Navigation progress (called from MapView on every position update) ────
@@ -303,7 +319,7 @@ export class RouteViewModel {
             this.routeCoordinates = [];
             this.remainingRouteCoordinates = [];
           });
-          VoiceGuidanceService.announce('You have arrived at your destination');
+          this.announce('You have arrived at your destination');
           return;
         }
       }
@@ -349,11 +365,15 @@ export class RouteViewModel {
       const totalM = this.steps.reduce((s, st) => s + st.distance, 0);
       const remainingS = totalM > 0 ? (remainingM / totalM) * this.totalDurationS : 0;
 
-      // Announce step change
+      // Announce step change — safety net announcing the upcoming maneuver
+      // for the step we just entered (steps[stepIdx].maneuver already
+      // happened; it's what put us on steps[stepIdx].name), in case a
+      // distance-threshold tick got skipped, e.g. a GPS jump straight
+      // across a step boundary.
       if (stepIdx !== this.currentStepIndex) {
-        const upcoming = this.steps[stepIdx];
-        if (upcoming && upcoming.maneuverType !== 'depart') {
-          VoiceGuidanceService.announce(upcoming.instruction);
+        const upcoming = this.steps[stepIdx + 1];
+        if (upcoming) {
+          this.announce(upcoming.instruction);
         }
       }
 
@@ -372,17 +392,21 @@ export class RouteViewModel {
   }
 
   private triggerVoiceGuidance(stepIdx: number, distToManeuver: number): void {
-    const step = this.steps[stepIdx];
-    if (!step || step.maneuverType === 'depart') return;
+    // distToManeuver counts down to the maneuver at the START of the NEXT
+    // step — steps[stepIdx].maneuver already happened; it's what put us on
+    // steps[stepIdx].name, the road we're currently driving. Falls back to
+    // the current step only when there's no next one (final leg).
+    const upcoming = this.steps[stepIdx + 1] ?? this.steps[stepIdx];
+    if (!upcoming) return;
 
     for (const { dist, label } of VOICE_THRESHOLDS) {
       const key = `${stepIdx}-${label}`;
       if (distToManeuver <= dist && !this._announcedKeys.has(key)) {
         this._announcedKeys.add(key);
         const text = label === 'now'
-          ? step.instruction
-          : `In ${label} meters, ${step.instruction.toLowerCase()}`;
-        VoiceGuidanceService.announce(text);
+          ? upcoming.instruction
+          : `In ${label} meters, ${upcoming.instruction.toLowerCase()}`;
+        this.announce(text);
         break;
       }
     }
@@ -405,7 +429,7 @@ export class RouteViewModel {
 
       if (dist > OFF_ROUTE_THRESHOLD_M && this.toCoord) {
         this.lastRerouteTime = Date.now();
-        VoiceGuidanceService.announce('Recalculating route');
+        this.announce('Recalculating route');
         runInAction(() => { this.isRerouting = true; });
         this.fetchDirections(userLngLat, this.toCoord).finally(() => {
           runInAction(() => { this.isRerouting = false; });

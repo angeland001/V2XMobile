@@ -14,12 +14,6 @@ interface TrafficLightPanelProps {
   // True when inside an active zone but no live SPaT data has been matched for
   // its intersection — shown explicitly instead of silently displaying no light.
   spatUnavailable?: boolean;
-  // True when the controller's live phase keeps disagreeing with the
-  // signal_group this zone requested — signals a bad dashboard config, not an
-  // app problem. See PreemptionViewModel.checkPhaseMismatch.
-  phaseMismatch?: boolean;
-  requestedSignalGroup?: number | null;
-  controllerSignalState?: number | null;
 }
 
 const LIGHTS: {
@@ -65,9 +59,6 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   ssmStatus = null,
   navOffset = 0,
   spatUnavailable = false,
-  phaseMismatch = false,
-  requestedSignalGroup = null,
-  controllerSignalState = null,
 }) => {
   const progressAnim = useRef(new Animated.Value(heartbeatPulse)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -100,21 +91,10 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   }, [ssmStatus]);
 
   const statusConfig = ssmStatus ? STATUS_CONFIG[ssmStatus] : null;
-  const housingBorderColor = phaseMismatch ? '#f59e0b' : statusConfig?.borderColor ?? '#333';
+  const housingBorderColor = statusConfig?.borderColor ?? '#333';
 
   return (
     <View style={[styles.wrapper, { bottom: 100 + navOffset }]}>
-      {phaseMismatch && (
-        <View style={styles.mismatchBanner}>
-          <Text style={styles.mismatchText} numberOfLines={2}>
-            PHASE MISMATCH{'\n'}
-            {requestedSignalGroup !== null && controllerSignalState !== null
-              ? `req φ${requestedSignalGroup} / ctrl φ${controllerSignalState}`
-              : 'check zone config'}
-          </Text>
-        </View>
-      )}
-
       {intersectionName ? (
         <View style={styles.nameBadge}>
           <Text style={styles.nameText} numberOfLines={2}>
@@ -201,25 +181,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: 76,
     zIndex: 1000,
-  },
-
-  mismatchBanner: {
-    backgroundColor: 'rgba(120, 53, 15, 0.92)',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#f59e0b',
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-    marginBottom: 8,
-    alignItems: 'center',
-    width: '100%',
-  },
-  mismatchText: {
-    color: '#fbbf24',
-    fontSize: 8,
-    fontWeight: '700',
-    textAlign: 'center',
-    lineHeight: 11,
   },
 
   nameBadge: {

@@ -18,21 +18,27 @@ import { SettingsViewModel } from '../viewmodels/SettingsViewModel';
 type TimCategory = 'safety' | 'regulatory' | 'informational';
 
 // Solid, saturated per-category background (not a neutral black/dark card) —
-// legibility comes from three redundant signals instead of one: fixed white
-// text with a hard drop-shadow (holds up even if a background render glitch
-// ever washes out the fill), a bold category color, and the icon+label pair.
-// All three text colors below sit at >= 5:1 contrast against their card.
-const TEXT_COLOR = '#FFFFFF';
-
+// legibility comes from three redundant signals instead of one: text colored
+// for contrast against its own card with a matching drop-shadow (holds up
+// even if a background render glitch ever washes out the fill), a bold
+// category color, and the icon+label pair. All text colors below sit at
+// >= 5:1 contrast against their card.
 const CATEGORY_STYLE: Record<TimCategory, {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
   bg: string;
   border: string;
+  text: string;
+  shadow: string;
 }> = {
-  safety:        { icon: 'warning',            label: 'Safety',      bg: '#B91C1C', border: '#FCA5A5' },
-  regulatory:    { icon: 'ban',                 label: 'Regulatory',  bg: '#92400E', border: '#FCD34D' },
-  informational: { icon: 'information-circle',  label: 'Info',        bg: '#1D4ED8', border: '#93C5FD' },
+  // Bright, high-visibility yellow — matches the caution-sign convention
+  // regulatory zones (speed/no-pass) call for, so it reads distinctly from
+  // the red safety and blue informational cards at a glance. Dark text
+  // (instead of the white used elsewhere) is what keeps it >= 5:1 contrast
+  // against a light fill this saturated.
+  safety:        { icon: 'warning',            label: 'Safety',      bg: '#B91C1C', border: '#FCA5A5', text: '#FFFFFF', shadow: 'rgba(0,0,0,0.55)' },
+  regulatory:    { icon: 'ban',                 label: 'Regulatory',  bg: '#FDE047', border: '#CA8A04', text: '#1A1A2E', shadow: 'rgba(255,255,255,0.6)' },
+  informational: { icon: 'information-circle',  label: 'Info',        bg: '#1D4ED8', border: '#93C5FD', text: '#FFFFFF', shadow: 'rgba(0,0,0,0.55)' },
 };
 
 interface DisplayItem {
@@ -114,19 +120,19 @@ const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDism
     <Animated.View style={animatedStyle}>
       <Pressable onPress={onDismiss} disabled={!onDismiss}>
         <View style={[styles.alert, { backgroundColor: cfg.bg, borderColor: cfg.border, borderWidth: isUrgent ? 3 : 1 }]}>
-          <View style={styles.iconWrap}>
-            <Ionicons name={cfg.icon} size={15} color={TEXT_COLOR} />
+          <View style={[styles.iconWrap, { backgroundColor: `${cfg.text}33` }]}>
+            <Ionicons name={cfg.icon} size={15} color={cfg.text} />
           </View>
           <View style={styles.textWrap}>
             <View style={styles.titleRow}>
-              <Text style={styles.title}>
+              <Text style={[styles.title, { color: cfg.text, textShadowColor: cfg.shadow }]}>
                 {cfg.label.toUpperCase()}
               </Text>
               {item.distanceM != null && (
-                <Text style={styles.distance}>{formatDistanceMeters(item.distanceM)} ahead</Text>
+                <Text style={[styles.distance, { color: cfg.text, textShadowColor: cfg.shadow }]}>{formatDistanceMeters(item.distanceM)} ahead</Text>
               )}
             </View>
-            <Text style={styles.description} numberOfLines={2}>{item.message}</Text>
+            <Text style={[styles.description, { color: cfg.text, textShadowColor: cfg.shadow }]} numberOfLines={2}>{item.message}</Text>
           </View>
         </View>
       </Pressable>
@@ -147,18 +153,16 @@ interface TimToastProps {
 const NAV_BANNER_GAP = 16;
 const AMBIENT_TOP_OFFSET = 90;
 const MAX_VISIBLE = 2;
-// Small margin off the true bottom edge — the same footprint the tab bar
-// occupied before it hides for navigation (it sat flush at bottom: 0).
-const BOTTOM_CENTER_MARGIN = 12;
 
 export const TimToast: React.FC<TimToastProps> = observer(
   ({ timService, routeViewModel, settingsViewModel, isNavigating = false }) => {
     const insets = useSafeAreaInsets();
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     // Same wide-car-display detection used across the nav HUD (see
-    // NavigationBanner) — on a car display TIM alerts dock bottom-center
-    // instead of stacking under the nav banner, clear of the recenter
-    // button/status toast MapView renders in that same bottom-center spot.
+    // NavigationBanner). On a car display: top-center while ambient
+    // (browsing, no route) so it stays clear of the system nav bar at the
+    // bottom; bottom-center once navigation is active, since the top band
+    // is then occupied by NavigationBanner + PedestrianWarning.
     const isWide = screenWidth > screenHeight * 1.3;
     // Nav-mode cards are persistent (computed fresh from the route each tick,
     // not a dismissable queue) — track user-dismissed keys locally so a tap
@@ -230,10 +234,23 @@ export const TimToast: React.FC<TimToastProps> = observer(
     const baseTop = isNavigating
       ? routeViewModel.navBannerHeightPx + NAV_BANNER_GAP
       : insets.top + AMBIENT_TOP_OFFSET;
+    const top = baseTop + routeViewModel.topHudExtraPx;
 
+    // Wide car displays (Android Auto / DHU) while navigating: forced all
+    // the way down to the literal bottom edge. bottom:110 used to put this
+    // centered card in the same vertical band as TrafficLightPanel
+    // (bottom-left, wrapper bottom: 100 + navOffset) and ZoomControls
+    // (bottom-right, container bottom: 110 + navOffset) — on the short,
+    // wide DHU emulator screen that reads as sitting adjacent to both. This
+    // takes priority over clearing the recenter button / status toast pair
+    // MapView stacks at the same bottom-center spot (bottomCenterBaseline
+    // 20) — those can be covered when a TIM alert is showing. Not
+    // navigating: top-center, clear of the system nav bar at the bottom.
     const positionStyle = isWide
-      ? { bottom: insets.bottom + BOTTOM_CENTER_MARGIN, left: (screenWidth - CARD_WIDTH) / 2 }
-      : { top: baseTop + routeViewModel.topHudExtraPx, left: 12 };
+      ? (isNavigating
+          ? { bottom: insets.bottom + 6, left: (screenWidth - CARD_WIDTH) / 2 }
+          : { top, left: (screenWidth - CARD_WIDTH) / 2 })
+      : { top, left: 12 };
 
     return (
       <View
@@ -253,8 +270,9 @@ export const TimToast: React.FC<TimToastProps> = observer(
   },
 );
 
+// textShadowColor is supplied per-item (see `cfg.shadow`) since it must
+// track each category's text color to stay legible.
 const TEXT_SHADOW = {
-  textShadowColor: 'rgba(0,0,0,0.55)',
   textShadowOffset: { width: 0, height: 1 },
   textShadowRadius: 2,
 } as const;
@@ -313,20 +331,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.6,
-    color: TEXT_COLOR,
     ...TEXT_SHADOW,
   },
   distance: {
     fontSize: 10,
     fontWeight: '700',
-    color: TEXT_COLOR,
     ...TEXT_SHADOW,
   },
   description: {
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
-    color: TEXT_COLOR,
     ...TEXT_SHADOW,
   },
 });

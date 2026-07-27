@@ -35,6 +35,7 @@ import asyncio
 def process(data):
     print(data)
 
+
 asyncio.run(
     cuip.Streams("LMoMUMXbL5xfyUWNtR3ip").process_ws_stream(
         process, "sdsm-events"

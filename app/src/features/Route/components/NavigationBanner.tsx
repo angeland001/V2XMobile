@@ -119,17 +119,21 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
     );
   }
 
+  // currentStep is the road already under the vehicle (its own maneuver
+  // already happened); nextStep is the upcoming maneuver — the turn the
+  // driver actually needs to make next, which is what distanceToManeuver
+  // counts down to and what voice guidance announces. See RouteViewModel's
+  // triggerVoiceGuidance for the matching logic on the voice side.
   const step = routeViewModel.currentStep;
   if (!step) return null;
 
-  const iconName = getManeuverIcon(step.maneuverType, step.maneuverModifier);
-  const dist = routeViewModel.distanceToManeuverFormatted;
   const nextStep = routeViewModel.nextStep;
+  const upcoming = nextStep ?? step;
 
-  // Show the road you're heading TO next, not the road you're currently on
-  const nextRoadName = nextStep && nextStep.maneuverType !== 'arrive' && nextStep.name
-    ? nextStep.name
-    : (step.name || step.instruction);
+  const iconName = getManeuverIcon(upcoming.maneuverType, upcoming.maneuverModifier);
+  const dist = routeViewModel.distanceToManeuverFormatted;
+  const upcomingRoadName = upcoming.name || upcoming.instruction;
+  const stepAfterNext = routeViewModel.stepAfterNext;
 
   return (
     <View
@@ -141,20 +145,27 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
       </View>
 
       <View style={styles.textColumn}>
+        {/* Current road first, small — where the driver is right now. */}
+        {step.name ? (
+          <Text style={styles.currentRoad} numberOfLines={1}>
+            {step.name}
+          </Text>
+        ) : null}
+        {/* Upcoming turn, dominant — the actionable instruction. */}
         <View style={styles.primaryRow}>
           {dist !== '' && <Text style={[styles.distance, isWide && styles.distanceWide]}>{dist}</Text>}
           <Text style={[styles.street, isWide && styles.streetWide]} numberOfLines={1}>
-            {nextRoadName}
+            {upcomingRoadName}
           </Text>
         </View>
         <Text style={[styles.instruction, isWide && styles.instructionWide]} numberOfLines={1}>
-          {step.instruction}
+          {upcoming.instruction}
         </Text>
         {/* "Then: ..." preview is the lowest-priority line — cut on wide
             (car) layouts where vertical space is scarce. */}
-        {!isWide && nextStep && nextStep.maneuverType !== 'arrive' && (
+        {!isWide && stepAfterNext && stepAfterNext.maneuverType !== 'arrive' && (
           <Text style={styles.nextStep} numberOfLines={1}>
-            Then: {nextStep.instruction}
+            Then: {stepAfterNext.instruction}
           </Text>
         )}
       </View>
@@ -190,6 +201,13 @@ const styles = StyleSheet.create({
   textColumn: {
     flex: 1,
     gap: 2,
+  },
+  currentRoad: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(26,26,46,0.45)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   primaryRow: {
     flexDirection: 'row',
