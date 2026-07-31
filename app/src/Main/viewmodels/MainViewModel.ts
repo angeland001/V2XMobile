@@ -27,6 +27,7 @@ export class MainViewModel {
   settingsViewModel: SettingsViewModel;
   routeViewModel: RouteViewModel;
   private positionSyncInterval: NodeJS.Timeout | null = null;
+  private zoneRefreshInterval: NodeJS.Timeout | null = null;
   
   isTestingMode: boolean = TESTING_CONFIG.USE_TESTING_MODE;
   
@@ -84,10 +85,20 @@ export class MainViewModel {
     }
   }
 
+  private static readonly ZONE_REFRESH_INTERVAL_MS = 60_000;
+
   private startSpatMonitoring(): void {
     // First-step integration: load SPaT zones from dashboard/backend API.
     // Runtime still falls back to local constants if API is unreachable.
-    SpatZoneService.loadZonesFromDashboard(1);
+    SpatZoneService.loadZonesFromDashboard();
+
+    // Zones are otherwise cached in memory for the process lifetime, so an
+    // admin editing a zone's boundary/lanes in the dashboard map editor
+    // wouldn't be picked up until app restart. Re-fetch periodically so an
+    // already-running session converges on edits within this window.
+    this.zoneRefreshInterval = setInterval(() => {
+      SpatZoneService.loadZonesFromDashboard();
+    }, MainViewModel.ZONE_REFRESH_INTERVAL_MS);
 
     const startWhenReady = () => {
       if (this.userLocation.latitude !== 0 && this.userLocation.longitude !== 0) {
@@ -182,6 +193,11 @@ export class MainViewModel {
     if (this.positionSyncInterval) {
       clearInterval(this.positionSyncInterval);
       this.positionSyncInterval = null;
+    }
+
+    if (this.zoneRefreshInterval) {
+      clearInterval(this.zoneRefreshInterval);
+      this.zoneRefreshInterval = null;
     }
 
     try {

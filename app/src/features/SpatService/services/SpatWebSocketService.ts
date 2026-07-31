@@ -53,6 +53,12 @@ export class SpatWebSocketService {
   private static reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private static latestByIntersection: Map<string, CacheEntry> = new Map();
   private static loggedFirstMessage = false;
+  // TEMP diagnostic for the phase-vs-overlap preemption investigation — logs
+  // every frame's status-group arrays (not the full ~100-field payload) so a
+  // preempted signalGroup's arrival in phaseStatusGroup* vs overlapStatusGroup*
+  // can be read directly off the console during a test run. Remove once the
+  // mismatch between "preempt granted" and the SPaT panel's color is diagnosed.
+  private static readonly LOG_EVERY_FRAME = true;
   // The intersection the current zone wants live data for. null means nothing
   // needs a connection right now — drives both whether to (re)connect and
   // whether onclose should schedule a reconnect at all.
@@ -122,6 +128,20 @@ export class SpatWebSocketService {
             SpatWebSocketService.loggedFirstMessage = true;
             console.log('[SpatWS] First spat-events message keys:', Object.keys(data));
             console.log('[SpatWS] First spat-events message raw:', JSON.stringify(data));
+          }
+
+          if (SpatWebSocketService.LOG_EVERY_FRAME) {
+            console.log(
+              `[SpatWS] frame intersection=${data.intersectionID ?? data.intersection ?? data.intersection_name ?? '?'}`,
+              `seq=${data.spatMessageSeqCounter ?? '?'}`,
+              `ts=${data.timestamp ?? '?'}`,
+              `phaseG=${JSON.stringify(data.phaseStatusGroupGreens ?? [])}`,
+              `phaseY=${JSON.stringify(data.phaseStatusGroupYellows ?? [])}`,
+              `phaseR=${JSON.stringify(data.phaseStatusGroupReds ?? [])}`,
+              `overlapG=${JSON.stringify(data.overlapStatusGroupGreens ?? [])}`,
+              `overlapY=${JSON.stringify(data.overlapStatusGroupYellows ?? [])}`,
+              `overlapR=${JSON.stringify(data.overlapStatusGroupReds ?? [])}`,
+            );
           }
 
           const intersectionRaw =
