@@ -17,16 +17,11 @@ export class PreemptionViewModel {
   activeZoneName: string | null = null;
   heartbeatProgress = 0; // 0–1, cycles every 1.5 s while heartbeat is running
 
-  // Phase mismatch detection: compares the signal_group we requested (from the
-  // dashboard config) against current_state, which the preempt bridge reads
-  // live off the physical controller. A persistent mismatch means the
-  // dashboard's signal_group for this zone is wrong, not that the app is
-  // misbehaving — see MOBILE_INTEGRATION.md for what current_state reports.
-  phaseMismatch = false;
+  // requestedSignalGroup is sourced from the dashboard config; controllerSignalState
+  // is current_state, which the preempt bridge reads live off the physical
+  // controller — see MOBILE_INTEGRATION.md for what current_state reports.
   requestedSignalGroup: number | null = null;
   controllerSignalState: number | null = null;
-  private mismatchStreak = 0;
-  private readonly MISMATCH_STREAK_THRESHOLD = 3; // ~4.5s of heartbeats — lets the controller finish transitioning before flagging
 
   // Snapshot of the fields above, taken when a session clears, so
   // TrafficLightPanel can keep showing the last known state for
@@ -267,8 +262,6 @@ export class PreemptionViewModel {
         this.ssmStatus = result.ssmStatus;
         this.requestedSignalGroup = config.signalGroup;
         this.controllerSignalState = null;
-        this.phaseMismatch = false;
-        this.mismatchStreak = 0;
         console.log(
           '[Preemption] START successful. Zone:',
           zone.name,
@@ -363,8 +356,6 @@ export class PreemptionViewModel {
     this.validEntry = false;
     this.requestedSignalGroup = null;
     this.controllerSignalState = null;
-    this.phaseMismatch = false;
-    this.mismatchStreak = 0;
 
     console.log('[Preemption] Session cleared');
   }
@@ -524,7 +515,9 @@ export class PreemptionViewModel {
           if (status && status !== this.ssmStatus) {
             runInAction(() => { this.ssmStatus = status; });
           }
-          this.checkPhaseMismatch(status, data.current_state);
+          runInAction(() => {
+            this.controllerSignalState = typeof data.current_state === 'number' ? data.current_state : null;
+          });
           return true;
         },
         { maxRetries: 2 }, // Heartbeat less critical than START
@@ -537,45 +530,12 @@ export class PreemptionViewModel {
     }
   }
 
-  // Flags when the controller's live phase (current_state, read off the
-  // physical signal by the preempt bridge) keeps disagreeing with the
-  // signal_group we requested (sourced from the dashboard config). A one-off
-  // mismatch is expected while the controller is still transitioning into the
-  // requested phase, so this only fires after several consecutive heartbeats
-  // disagree — a persistent mismatch means the dashboard's signal_group for
-  // this zone is wrong, not a transient timing issue.
-  private checkPhaseMismatch(status: 'granted' | 'cancelled' | undefined, currentState: unknown): void {
-    const controllerState = typeof currentState === 'number' ? currentState : null;
-
-    runInAction(() => {
-      this.controllerSignalState = controllerState;
-
-      const canCompare =
-        status === 'granted' && controllerState !== null && this.requestedSignalGroup !== null;
-
-      if (canCompare && controllerState !== this.requestedSignalGroup) {
-        this.mismatchStreak += 1;
-        if (this.mismatchStreak >= this.MISMATCH_STREAK_THRESHOLD && !this.phaseMismatch) {
-          this.phaseMismatch = true;
-          console.log(
-            `[Preemption] PHASE MISMATCH: requested signal_group ${this.requestedSignalGroup} but controller current_state is ${controllerState} — check this zone's signal_group in the dashboard`,
-          );
-        }
-      } else {
-        this.mismatchStreak = 0;
-        this.phaseMismatch = false;
-      }
-    });
-  }
-
   // Traffic-light color derived from the preempt bridge's live controller
   // reading, for intersections CUIP's spat-events stream doesn't cover (e.g.
   // the lab bench controller) — the only other live source TrafficLightPanel
-  // has. current_state is a signal-group number, not a color, so this reuses
-  // the same "does it match what we requested" comparison as
-  // checkPhaseMismatch: green once the controller's active phase is the one
-  // we asked for, red otherwise. null (no light shown) until the first
-  // heartbeat reports a controller state.
+  // has. current_state is a signal-group number, not a color: green once the
+  // controller's active phase is the one we asked for, red otherwise. null
+  // (no light shown) until the first heartbeat reports a controller state.
   get controllerLight(): 'red' | 'green' | null {
     const state = this.displayControllerSignalState;
     const requested = this.displayRequestedSignalGroup;
