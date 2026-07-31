@@ -27,7 +27,10 @@ export const API_CONFIG = {
   // Dashboard backend (SPaT zones authored in Kepler dashboard)
   DASHBOARD_API_URL: 'http://10.199.1.41:3001',
 
-  // Use direct IP to bypass emulator DNS; Host header is set explicitly in fetch calls
+  // LOCAL DOCKER (dev testing; emulator uses 10.0.2.2 to reach host machine's Docker container):
+  // PREEMPTION_API_URL: 'http://10.0.2.2:8001',
+  // PRODUCTION VM (roadaware, over CUIP network):
+  // PREEMPTION_API_URL: 'http://roadaware.cuip.research.utc.edu/preemptapi',
   PREEMPTION_API_URL: 'http://10.0.2.2:8001',
   PREEMPTION_HOST: 'roadaware.cuip.research.utc.edu',
 };
