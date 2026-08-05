@@ -1,6 +1,8 @@
 // app/src/features/Map/views/components/MapLegend.tsx
 import React from 'react';
 import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
+import { CarIcon } from '../../../UI/components/icons/CarIcon';
+import { PedestrianIcon } from '../../../UI/components/icons/PedestrianIcon';
 
 interface MapLegendProps {
   top: number;
@@ -12,14 +14,14 @@ export const MapLegend: React.FC<MapLegendProps> = ({ top, onLayout }) => {
     <View style={[styles.container, { top }]} onLayout={onLayout}>
       <View style={styles.legendItem}>
         <View style={styles.vehicleIcon}>
-          <View style={styles.vehicleIconInner} />
+          <CarIcon size={12} color="#0082BF" />
         </View>
         <Text style={styles.legendText}>Vehicle</Text>
       </View>
 
       <View style={styles.legendItem}>
         <View style={styles.pedestrianIcon}>
-          <View style={styles.pedestrianIconInner} />
+          <PedestrianIcon size={11} color="#0082BF" />
         </View>
         <Text style={styles.legendText}>Pedestrian</Text>
       </View>
@@ -58,36 +60,20 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   vehicleIcon: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#3B82F6',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  vehicleIconInner: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#FFFFFF',
   },
   pedestrianIcon: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#FF6B35',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  pedestrianIconInner: {
-    width: 5,
-    height: 5,
-    borderRadius: 2.5,
-    backgroundColor: '#FFFFFF',
   },
 });
 

@@ -6,6 +6,7 @@ export class SettingsViewModel {
   informationalAlerts = true;
   showVehicles = true;
   showLanes = false;
+  trafficLightPanelEnabled = true;
 
   constructor() {
     makeAutoObservable(this);

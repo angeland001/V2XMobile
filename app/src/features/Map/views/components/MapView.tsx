@@ -403,6 +403,16 @@ const BOTTOM_CENTER_ORDER = ["recenter", "toast"] as const;
 // with the nav banner, Auto Preemption stacked below it — keeps both clear
 // of the traffic light panel on the left instead of colliding with it.
 const NAV_TOP_RIGHT_ORDER = ["etaBanner", "preemptionToggle"] as const;
+// Left stack for wide/short car displays: when Auto Preemption stays docked
+// left (i.e. not navigating — see preemptionDockRight), the screen is short
+// enough that its top-anchored spot and the traffic light panel's old
+// bottom-anchored spot could occupy the same vertical band. Stacking the
+// panel directly below the toggle's measured height removes the guesswork.
+const LEFT_STACK_ORDER = ["preemptionToggle", "trafficLightPanel"] as const;
+// Left inset for the traffic light panel specifically when it's stacked below
+// the toggle on a wide car display — PreemptionToggle's own position never
+// changes; only this value moves the panel. Edit this number to shift it.
+const TRAFFIC_LIGHT_PANEL_CAR_LEFT = 50;
 
 // Ease duration for the per-fix nav camera follow update. Longer than the
 // 50ms throttle interval so each new setCamera call overrides the previous
@@ -440,9 +450,18 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     children,
   }) => {
     const cameraRef = useRef<MapboxGL.Camera>(null);
-    const spatViewModelRef = useRef<SpatViewModel>(new SpatViewModel());
-    const lanesViewModelRef = useRef<LanesViewModel>(new LanesViewModel());
-    const preemptionViewModelRef = useRef<PreemptionViewModel>(new PreemptionViewModel());
+    const spatViewModelRef = useRef<SpatViewModel | null>(null);
+    if (spatViewModelRef.current === null) {
+      spatViewModelRef.current = new SpatViewModel();
+    }
+    const lanesViewModelRef = useRef<LanesViewModel | null>(null);
+    if (lanesViewModelRef.current === null) {
+      lanesViewModelRef.current = new LanesViewModel();
+    }
+    const preemptionViewModelRef = useRef<PreemptionViewModel | null>(null);
+    if (preemptionViewModelRef.current === null) {
+      preemptionViewModelRef.current = new PreemptionViewModel();
+    }
 
     const spatViewModel = providedSpatViewModel || spatViewModelRef.current;
     const lanesViewModel = providedLanesViewModel || lanesViewModelRef.current;
@@ -495,6 +514,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const topRightStack = useStackedOffset(TOP_RIGHT_ORDER, 12);
     const bottomCenterStack = useStackedOffset(BOTTOM_CENTER_ORDER, 10);
     const navTopRightStack = useStackedOffset(NAV_TOP_RIGHT_ORDER, 10);
+    const leftStack = useStackedOffset(LEFT_STACK_ORDER, 15);
     const [pedestrianWarningHeight, setPedestrianWarningHeight] = useState(0);
 
     // Legend/overlay menu only ever render while NOT navigating (see below),
@@ -516,6 +536,17 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const preemptionTop = preemptionDockRight
       ? navTopRightStack.offsetFor('preemptionToggle', etaBannerTop)
       : 30 + (isNavigating ? navBannerHeight : 0);
+    // On a wide car display the toggle only ever leaves its left-docked spot
+    // while navigating (preemptionDockRight above) — any other time on that
+    // display it stays top-left, in the same column the traffic light panel
+    // used to bottom-anchor into, on a screen too short for both to fit
+    // without overlapping. Stack the panel below the toggle's real height
+    // instead in that one case; a normal phone has enough vertical room that
+    // top-anchored toggle and bottom-anchored panel never meet.
+    const stackTrafficLightBelowToggle = isWide && !preemptionDockRight;
+    const trafficLightPanelTop = stackTrafficLightBelowToggle
+      ? leftStack.offsetFor('trafficLightPanel', preemptionTop)
+      : undefined;
 
     // Recenter button unmounts as soon as the user stops panning away — clear
     // its recorded height so the toast (stacked above it) collapses back
@@ -970,6 +1001,22 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
     const routeVM = mainViewModel?.routeViewModel;
 
+    // While a preemption session has a target signal group, the panel must track
+    // THAT phase specifically rather than the zone's ambient default — the zone's
+    // configured signalGroup (SpatZoneService) and the preemption config's signalGroup
+    // (PreemptionConfigService) are independently sourced and can point at different
+    // movements, so falling back to the zone default here would show the wrong phase's
+    // color/timer while a preemption is actually in flight.
+    const preemptTargetGroup = preemptionViewModel.displayRequestedSignalGroup;
+    const effectiveSignalState =
+      preemptTargetGroup !== null
+        ? spatViewModel.getDisplaySignalStateForGroup(preemptTargetGroup)
+        : spatViewModel.displaySignalState;
+    const effectiveDurationLabel =
+      preemptTargetGroup !== null
+        ? spatViewModel.getDisplayPhaseDurationLabelForGroup(preemptTargetGroup)
+        : spatViewModel.displayPhaseDurationLabel;
+
     return (
       <View style={styles.container}>
         {/* Navigation overlays — rendered outside the MapboxGL.MapView so they sit on top */}
@@ -1016,7 +1063,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           onToggle={(enabled) => { preemptionViewModel.toggleEnabled(enabled); }}
           top={preemptionTop}
           dockRight={preemptionDockRight}
-          onLayout={navTopRightStack.onLayout('preemptionToggle')}
+          onLayout={(e) => {
+            navTopRightStack.onLayout('preemptionToggle')(e);
+            leftStack.onLayout('preemptionToggle')(e);
+          }}
         />
 
         <PedestrianWarning
@@ -1154,23 +1204,33 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         />
 
         <TrafficLightPanel
-          ssmStatus={preemptionViewModel.displaySsmStatus}
+          // Panel housing/name/duration stay visible regardless of this setting —
+          // it only mutes the live light color and the ssmStatus-driven glow/pulse/
+          // border, i.e. whether the panel "lights up".
+          ssmStatus={
+            (mainViewModel?.settingsViewModel?.trafficLightPanelEnabled ?? true)
+              ? preemptionViewModel.displaySsmStatus
+              : null
+          }
           intersectionName={preemptionViewModel.displayActiveZoneName ?? undefined}
           heartbeatPulse={preemptionViewModel.heartbeatProgress}
-          durationLabel={spatViewModel.displayPhaseDurationLabel}
+          durationLabel={effectiveDurationLabel}
+          top={trafficLightPanelTop}
+          left={stackTrafficLightBelowToggle ? TRAFFIC_LIGHT_PANEL_CAR_LEFT : undefined}
           // Suppress the "unavailable" alert whenever the controller-light
           // fallback below has something to show instead — a colored light
           // next to an "unavailable" label would be a contradiction.
           spatUnavailable={spatViewModel.displaySpatUnavailable && preemptionViewModel.controllerLight === null}
           activeLight={
-            spatViewModel.displaySignalState === SignalState.GREEN ? 'green' :
-            spatViewModel.displaySignalState === SignalState.RED ? 'red' :
-            spatViewModel.displaySignalState === SignalState.YELLOW ? 'yellow' :
-            // No live CUIP color right now — whether that's because this
-            // intersection has no CUIP coverage at all (e.g. Lab_Device data
-            // that hasn't arrived) or a transient corridor gap, the preempt
-            // bridge's own live controller reading is a legitimate signal any
-            // time a preemption session has one. Prefer it over showing nothing.
+            !(mainViewModel?.settingsViewModel?.trafficLightPanelEnabled ?? true) ? null :
+            effectiveSignalState === SignalState.GREEN ? 'green' :
+            effectiveSignalState === SignalState.RED ? 'red' :
+            effectiveSignalState === SignalState.YELLOW ? 'yellow' :
+            // No live CUIP color for the phase we actually care about right now —
+            // whether that's because this intersection has no CUIP coverage at all
+            // (e.g. Lab_Device data that hasn't arrived) or a transient corridor
+            // gap, the preempt bridge's own live controller reading is a legitimate
+            // signal any time a preemption session has one. Prefer it over nothing.
             preemptionViewModel.controllerLight
           }
         />

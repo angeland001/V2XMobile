@@ -116,6 +116,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
             value={settingsViewModel.showLanes}
             onToggle={(v) => { settingsViewModel.showLanes = v; }}
           />
+          <View style={styles.cardDivider} />
+          <ToggleRow
+            icon="flash-outline"
+            label="Traffic Light Panel"
+            sublabel="Light up with live signal color"
+            value={settingsViewModel.trafficLightPanelEnabled}
+            onToggle={(v) => { settingsViewModel.trafficLightPanelEnabled = v; }}
+          />
         </View>
 
         <Text style={styles.sectionLabel}>CONNECTION</Text>

@@ -14,6 +14,13 @@ interface TrafficLightPanelProps {
   // True when inside an active zone but no live SPaT data has been matched for
   // its intersection — shown explicitly instead of silently displaying no light.
   spatUnavailable?: boolean;
+  // When set, positions the panel from the top instead of its normal
+  // bottom-anchored spot — used on wide/short car displays where it needs to
+  // stack directly below the Auto Preemption toggle instead.
+  top?: number;
+  // Left inset; defaults to the panel's normal phone-layout position. Pass the
+  // toggle's own left inset when stacking below it so both line up.
+  left?: number;
 }
 
 const LIGHTS: {
@@ -59,10 +66,19 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   ssmStatus = null,
   navOffset = 0,
   spatUnavailable = false,
+  top,
+  left = 16,
 }) => {
   const progressAnim = useRef(new Animated.Value(heartbeatPulse)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
+  // One-shot "preemption started" flash — a bright ring that fades out over
+  // ~1.8s the moment ssmStatus first transitions to 'granted'. Deliberately
+  // scoped to the existing panel rather than a new banner/modal: a driving UI
+  // shouldn't grab more attention than a peripheral highlight on something the
+  // driver's eyes are already tracking.
+  const grantedFlashAnim = useRef(new Animated.Value(0)).current;
+  const prevSsmStatusRef = useRef<SsmStatus>(ssmStatus);
 
   useEffect(() => {
     Animated.timing(progressAnim, {
@@ -90,11 +106,29 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
     };
   }, [ssmStatus]);
 
+  useEffect(() => {
+    if (prevSsmStatusRef.current !== 'granted' && ssmStatus === 'granted') {
+      grantedFlashAnim.setValue(1);
+      Animated.timing(grantedFlashAnim, {
+        toValue: 0,
+        duration: 1800,
+        useNativeDriver: false,
+      }).start();
+    }
+    prevSsmStatusRef.current = ssmStatus;
+  }, [ssmStatus]);
+
   const statusConfig = ssmStatus ? STATUS_CONFIG[ssmStatus] : null;
   const housingBorderColor = statusConfig?.borderColor ?? '#333';
 
   return (
-    <View style={[styles.wrapper, { bottom: 100 + navOffset }]}>
+    <View
+      style={[
+        styles.wrapper,
+        { left },
+        top !== undefined ? { top } : { bottom: 100 + navOffset },
+      ]}
+    >
       {intersectionName ? (
         <View style={styles.nameBadge}>
           <Text style={styles.nameText} numberOfLines={2}>
@@ -114,61 +148,67 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
         </View>
       ) : null}
 
-      <View style={[styles.housing, { borderColor: housingBorderColor }]}>
-        <View style={styles.bolt} />
+      <View style={styles.housingContainer}>
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.grantedFlashRing, { opacity: grantedFlashAnim }]}
+        />
+        <View style={[styles.housing, { borderColor: housingBorderColor }]}>
+          <View style={styles.bolt} />
 
-        {LIGHTS.map(({ key, activeColor, glowColor, dimColor }) => {
-          const isActive = activeLight === key;
-          return (
-            <View
-              key={key}
-              style={[styles.lightSocket, isActive && { backgroundColor: glowColor }]}
-            >
+          {LIGHTS.map(({ key, activeColor, glowColor, dimColor }) => {
+            const isActive = activeLight === key;
+            return (
               <View
+                key={key}
+                style={[styles.lightSocket, isActive && { backgroundColor: glowColor }]}
+              >
+                <View
+                  style={[
+                    styles.light,
+                    { backgroundColor: isActive ? activeColor : dimColor },
+                    isActive && {
+                      shadowColor: activeColor,
+                      shadowOpacity: 0.95,
+                      // Kept small enough that the glow's falloff stays inside
+                      // lightSocket's 4px margin around the light — the socket
+                      // now clips overflow, so a larger radius here would just
+                      // get chopped off at a hard edge instead of fading out.
+                      shadowRadius: 6,
+                      shadowOffset: { width: 0, height: 0 },
+                      elevation: 6,
+                    },
+                  ]}
+                />
+              </View>
+            );
+          })}
+
+          <View style={styles.bolt} />
+
+          {ssmStatus !== null && (
+            <View style={styles.progressTrack}>
+              <Animated.View
                 style={[
-                  styles.light,
-                  { backgroundColor: isActive ? activeColor : dimColor },
-                  isActive && {
-                    shadowColor: activeColor,
-                    shadowOpacity: 0.95,
-                    // Kept small enough that the glow's falloff stays inside
-                    // lightSocket's 4px margin around the light — the socket
-                    // now clips overflow, so a larger radius here would just
-                    // get chopped off at a hard edge instead of fading out.
-                    shadowRadius: 6,
-                    shadowOffset: { width: 0, height: 0 },
-                    elevation: 6,
+                  styles.progressFill,
+                  {
+                    width: progressAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0%', '100%'],
+                    }),
                   },
                 ]}
               />
             </View>
-          );
-        })}
-
-        <View style={styles.bolt} />
-
-        {ssmStatus !== null && (
-          <View style={styles.progressTrack}>
-            <Animated.View
-              style={[
-                styles.progressFill,
-                {
-                  width: progressAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0%', '100%'],
-                  }),
-                },
-              ]}
-            />
-          </View>
-        )}
-        {spatUnavailable ? (
-          <Text style={styles.unavailableText} numberOfLines={2}>
-            SPaT unavailable
-          </Text>
-        ) : (
-          <Text style={styles.durationText}>{durationLabel}</Text>
-        )}
+          )}
+          {spatUnavailable ? (
+            <Text style={styles.unavailableText} numberOfLines={2}>
+              SPaT unavailable
+            </Text>
+          ) : (
+            <Text style={styles.durationText}>{durationLabel}</Text>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -177,7 +217,6 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    left: 16,
     alignItems: 'center',
     width: 76,
     zIndex: 1000,
@@ -206,6 +245,20 @@ const styles = StyleSheet.create({
     marginTop: 3,
   },
 
+  housingContainer: {
+    width: '100%',
+    position: 'relative',
+  },
+  grantedFlashRing: {
+    position: 'absolute',
+    top: -6,
+    left: -6,
+    right: -6,
+    bottom: -6,
+    borderRadius: 18,
+    borderWidth: 3,
+    borderColor: '#30D158',
+  },
   housing: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
