@@ -3,6 +3,8 @@ import React from 'react';
 import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
 import { CarIcon } from '../../../UI/components/icons/CarIcon';
 import { PedestrianIcon } from '../../../UI/components/icons/PedestrianIcon';
+import { MarkerPin } from '../../../UI/components/icons/MarkerPin';
+import COLORS from '../../../UI/theme';
 
 interface MapLegendProps {
   top: number;
@@ -13,16 +15,16 @@ export const MapLegend: React.FC<MapLegendProps> = ({ top, onLayout }) => {
   return (
     <View style={[styles.container, { top }]} onLayout={onLayout}>
       <View style={styles.legendItem}>
-        <View style={styles.vehicleIcon}>
-          <CarIcon size={12} color="#0082BF" />
-        </View>
+        <MarkerPin size={22} iconSize={10} color={COLORS.orange}>
+          <CarIcon size={10} color={COLORS.white} />
+        </MarkerPin>
         <Text style={styles.legendText}>Vehicle</Text>
       </View>
 
       <View style={styles.legendItem}>
-        <View style={styles.pedestrianIcon}>
-          <PedestrianIcon size={11} color="#0082BF" />
-        </View>
+        <MarkerPin size={20} iconSize={9} color={COLORS.blue}>
+          <PedestrianIcon size={9} color={COLORS.white} />
+        </MarkerPin>
         <Text style={styles.legendText}>Pedestrian</Text>
       </View>
     </View>
@@ -58,22 +60,6 @@ const styles = StyleSheet.create({
     color: '#E2E8F0',
     fontWeight: '500',
     marginLeft: 6,
-  },
-  vehicleIcon: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pedestrianIcon: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
 });
 

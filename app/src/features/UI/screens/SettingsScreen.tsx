@@ -5,12 +5,13 @@ import {
   Switch,
   ScrollView,
   StyleSheet,
+  TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
 import { COLORS } from '../theme';
 import { API_CONFIG } from '../../../core/api/config';
-import { SettingsViewModel } from '../viewmodels/SettingsViewModel';
+import { SettingsViewModel, PreemptionZoneDisplayMode } from '../viewmodels/SettingsViewModel';
 
 interface ToggleRowProps {
   label: string;
@@ -36,6 +37,50 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ label, sublabel, value, onToggle,
       thumbColor={value ? COLORS.orange : COLORS.textDim}
       ios_backgroundColor={COLORS.surface3}
     />
+  </View>
+);
+
+interface SegmentedRowProps {
+  label: string;
+  sublabel?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  value: PreemptionZoneDisplayMode;
+  onChange: (v: PreemptionZoneDisplayMode) => void;
+}
+
+const ZONE_DISPLAY_SEGMENTS: { value: PreemptionZoneDisplayMode; label: string }[] = [
+  { value: 'full', label: 'Full' },
+  { value: 'icon', label: 'Icon' },
+  { value: 'off', label: 'Off' },
+];
+
+const SegmentedRow: React.FC<SegmentedRowProps> = ({ label, sublabel, icon, value, onChange }) => (
+  <View style={styles.segmentedRow}>
+    <View style={styles.segmentedTop}>
+      <View style={[styles.rowIcon, { backgroundColor: value !== 'off' ? COLORS.orangeBg : COLORS.surface2 }]}>
+        <Ionicons name={icon} size={17} color={value !== 'off' ? COLORS.orange : COLORS.textSecondary} />
+      </View>
+      <View style={styles.toggleText}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        {sublabel && <Text style={styles.toggleSub}>{sublabel}</Text>}
+      </View>
+    </View>
+    <View style={styles.segmentedControl}>
+      {ZONE_DISPLAY_SEGMENTS.map((segment) => {
+        const selected = value === segment.value;
+        return (
+          <TouchableOpacity
+            key={segment.value}
+            style={[styles.segmentButton, selected && styles.segmentButtonActive]}
+            onPress={() => onChange(segment.value)}
+          >
+            <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextActive]}>
+              {segment.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
   </View>
 );
 
@@ -123,6 +168,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
             sublabel="Light up with live signal color"
             value={settingsViewModel.trafficLightPanelEnabled}
             onToggle={(v) => { settingsViewModel.trafficLightPanelEnabled = v; }}
+          />
+          <View style={styles.cardDivider} />
+          <SegmentedRow
+            icon="flash-outline"
+            label="Preemption Zones"
+            sublabel="Full overlay, icon only, or hidden"
+            value={settingsViewModel.preemptionZoneDisplay}
+            onChange={(v) => { settingsViewModel.preemptionZoneDisplay = v; }}
           />
         </View>
 
@@ -244,6 +297,40 @@ const styles = StyleSheet.create({
   toggleSub: {
     fontSize: 11,
     color: COLORS.textSecondary,
+  },
+  segmentedRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    gap: 10,
+  },
+  segmentedTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surface2,
+    borderRadius: 8,
+    padding: 3,
+    gap: 3,
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  segmentButtonActive: {
+    backgroundColor: COLORS.orange,
+  },
+  segmentButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: COLORS.textSecondary,
+  },
+  segmentButtonTextActive: {
+    color: COLORS.white,
   },
   infoRow: {
     flexDirection: 'row',

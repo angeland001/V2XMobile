@@ -1,5 +1,7 @@
 import { makeAutoObservable } from 'mobx';
 
+export type PreemptionZoneDisplayMode = 'full' | 'icon' | 'off';
+
 export class SettingsViewModel {
   safetyAlerts = true;
   regulatoryAlerts = true;
@@ -7,6 +9,7 @@ export class SettingsViewModel {
   showVehicles = true;
   showLanes = false;
   trafficLightPanelEnabled = true;
+  preemptionZoneDisplay: PreemptionZoneDisplayMode = 'full';
 
   constructor() {
     makeAutoObservable(this);
