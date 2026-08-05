@@ -14,7 +14,10 @@ export const SpatStatusDisplay: React.FC<SpatStatusDisplayProps> = observer(({
   userPosition, 
   spatViewModel 
 }) => {
-  const viewModelRef = useRef<SpatViewModel>(new SpatViewModel());
+  const viewModelRef = useRef<SpatViewModel | null>(null);
+  if (viewModelRef.current === null) {
+    viewModelRef.current = new SpatViewModel();
+  }
   const viewModel = spatViewModel || viewModelRef.current;
 
   useEffect(() => {

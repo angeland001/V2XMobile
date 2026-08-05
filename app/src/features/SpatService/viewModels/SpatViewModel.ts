@@ -29,6 +29,15 @@ export class SpatViewModel {
   private lastSignalState: SignalState = SignalState.UNKNOWN;
   private lastPhaseTiming: { minS: number; maxS: number } | null = null;
   private lastSpatUnavailable: boolean = false;
+  // Raw cached payload, kept alongside the zone-default derived fields above so
+  // getSignalStateForGroup/getPhaseTimingForGroup can answer for ANY signal
+  // group on this intersection (e.g. the one a preemption session actually
+  // requested), not just currentSignalGroup's zone-configured default. The
+  // spat-events payload carries phaseStatusGroup*/spatVehMin/MaxTimeToChange*
+  // fields for all 16 groups on every message, so this is safe to query
+  // per-group without a second network source.
+  private rawSpatData: Record<string, any> | null = null;
+  private lastRawSpatData: Record<string, any> | null = null;
   private graceClearTimeout: NodeJS.Timeout | null = null;
   // Keep in sync with PreemptionViewModel's EXIT_GRACE_MS — both linger the
   // same TrafficLightPanel render for the same window after zone exit.
@@ -210,6 +219,7 @@ export class SpatViewModel {
       this.signalState = SignalState.UNKNOWN;
       this.currentPhaseTiming = null;
       this.spatDataAvailable = false;
+      this.rawSpatData = null;
       this.error = null;
       this.isLoading = false;
     });
@@ -227,6 +237,7 @@ export class SpatViewModel {
         this.lastSignalState = SignalState.UNKNOWN;
         this.lastPhaseTiming = null;
         this.lastSpatUnavailable = false;
+        this.lastRawSpatData = null;
       });
     }, SpatViewModel.EXIT_GRACE_MS);
   }
@@ -253,10 +264,13 @@ export class SpatViewModel {
         this.error = null;
       }
 
+      this.rawSpatData = spatData ?? null;
+
       if (this.shouldShowDisplay) {
         this.lastSignalState = this.signalState;
         this.lastPhaseTiming = this.currentPhaseTiming;
         this.lastSpatUnavailable = this.spatUnavailable;
+        this.lastRawSpatData = this.rawSpatData;
       }
     });
   }
@@ -337,6 +351,22 @@ export class SpatViewModel {
 
   get displayPhaseDurationLabel(): string {
     return this.formatPhaseDuration(this.shouldShowDisplay ? this.currentPhaseTiming : this.lastPhaseTiming);
+  }
+
+  // Same live/last-known fallback as displaySignalState/displayPhaseDurationLabel,
+  // but for an arbitrary signal group rather than this zone's configured default —
+  // lets callers (e.g. an active preemption session) ask about the specific phase
+  // they care about instead of whatever this zone's ambient display is tracking.
+  getDisplaySignalStateForGroup(signalGroup: number | null): SignalState {
+    if (signalGroup === null) return SignalState.UNKNOWN;
+    const data = this.shouldShowDisplay ? this.rawSpatData : this.lastRawSpatData;
+    return SpatApiService.getSignalStateForGroup(data ?? {}, signalGroup);
+  }
+
+  getDisplayPhaseDurationLabelForGroup(signalGroup: number | null): string {
+    if (signalGroup === null) return '--';
+    const data = this.shouldShowDisplay ? this.rawSpatData : this.lastRawSpatData;
+    return this.formatPhaseDuration(SpatApiService.getPhaseTimingForGroup(data ?? {}, signalGroup));
   }
 
   private formatPhaseDuration(timing: { minS: number; maxS: number } | null): string {

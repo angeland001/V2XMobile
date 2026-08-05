@@ -58,7 +58,7 @@ export class SpatWebSocketService {
   // preempted signalGroup's arrival in phaseStatusGroup* vs overlapStatusGroup*
   // can be read directly off the console during a test run. Remove once the
   // mismatch between "preempt granted" and the SPaT panel's color is diagnosed.
-  private static readonly LOG_EVERY_FRAME = true;
+  private static readonly LOG_EVERY_FRAME = false;
   // The intersection the current zone wants live data for. null means nothing
   // needs a connection right now — drives both whether to (re)connect and
   // whether onclose should schedule a reconnect at all.
