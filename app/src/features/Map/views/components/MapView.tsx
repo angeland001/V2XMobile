@@ -31,6 +31,8 @@ import { ZoomControls } from "./mapoverlay/ZoomControls";
 import { PreemptionToggle } from "../../../preemption/components/PreemptionToggle";
 import { PreemptionViewModel } from "../../../preemption/viewModels/PreemptionViewModel";
 import { SpatZone, SpatZoneService } from "../../../SpatService/services/SpatZoneService";
+import { PreemptionZoneDisplayMode } from "../../../UI/viewmodels/SettingsViewModel";
+import { MarkerPin, MARKER_PIN_TIP_ANCHOR } from "../../../UI/components/icons/MarkerPin";
 import { SignalState } from "../../../SpatService/models/SpatModels";
 import { closeRing, normalizeToLngLat, type LngLat } from "../../../../core/maps/coordinates";
 import { NavigationBanner } from "../../../Route/components/NavigationBanner";
@@ -211,9 +213,12 @@ interface SpatZoneLayerProps {
   zones: SpatZone[];
   activeSpatZoneId: string | null;
   spatViewModel: SpatViewModel;
+  displayMode: PreemptionZoneDisplayMode;
 }
 
-const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpatZoneId, spatViewModel }) => {
+const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpatZoneId, spatViewModel, displayMode }) => {
+  if (displayMode === 'off') return null;
+
   return (
     <>
       {zones.map((zone) => {
@@ -246,6 +251,22 @@ const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpa
           fillColor = 'rgba(59, 130, 246, 0.08)';
           lineColor = 'rgba(59, 130, 246, 0.45)';
           lineWidth = 1.5;
+        }
+
+        if (displayMode === 'icon') {
+          const centroid = lngLatCentroid(zone.polygon as LngLat[]);
+          return (
+            <MapboxGL.MarkerView
+              key={`spat-icon-${zone.id}`}
+              coordinate={centroid}
+              anchor={{ x: 0.5, y: MARKER_PIN_TIP_ANCHOR }}
+              allowOverlap={true}
+            >
+              <MarkerPin size={30} iconSize={14} color={lineColor}>
+                <Ionicons name="flash" size={14} color="#FFFFFF" />
+              </MarkerPin>
+            </MapboxGL.MarkerView>
+          );
         }
 
         // zone.polygon is already LngLat[] — close the ring for GeoJSON
@@ -1138,6 +1159,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             zones={spatZones}
             activeSpatZoneId={activeSpatZoneId}
             spatViewModel={spatViewModel}
+            displayMode={mainViewModel?.settingsViewModel?.preemptionZoneDisplay ?? 'full'}
           />
 
           <TIMLayer mainViewModel={mainViewModel} />

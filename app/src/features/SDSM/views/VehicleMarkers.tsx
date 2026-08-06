@@ -1,11 +1,12 @@
 // app/src/features/SDSM/views/VehicleMarkers.tsx
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
 import MapboxGL from '@rnmapbox/maps';
 import { observer } from 'mobx-react-lite';
 import { VehicleDisplayViewModel } from '../viewmodels/VehicleDisplayViewModel';
 import { isValidLngLat } from '../../../core/maps/coordinates';
 import { CarIcon } from '../../UI/components/icons/CarIcon';
+import { MarkerPin, MARKER_PIN_TIP_ANCHOR } from '../../UI/components/icons/MarkerPin';
+import COLORS from '../../UI/theme';
 
 interface VehicleMarkersProps {
   viewModel: VehicleDisplayViewModel;
@@ -25,33 +26,15 @@ export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewMod
         <MapboxGL.MarkerView
           key={String(vehicle.id)}
           coordinate={viewModel.getMapCoordinates(vehicle)}
-          anchor={{ x: 0.5, y: 0.5 }}
+          anchor={{ x: 0.5, y: MARKER_PIN_TIP_ANCHOR }}
         >
-          <View style={styles.marker}>
-            <CarIcon size={14} color="#0082BF" />
-          </View>
+          <MarkerPin size={34} iconSize={15} color={COLORS.orange}>
+            <CarIcon size={15} color={COLORS.white} />
+          </MarkerPin>
         </MapboxGL.MarkerView>
       ))}
     </>
   );
-});
-
-const styles = StyleSheet.create({
-  marker: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 2,
-    elevation: 3,
-  },
 });
 
 export default VehicleMarkers;
