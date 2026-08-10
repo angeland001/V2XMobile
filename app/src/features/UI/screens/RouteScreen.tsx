@@ -8,8 +8,10 @@ import {
   ScrollView,
   StyleSheet,
   ActivityIndicator,
+  Keyboard,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapboxGL from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
@@ -217,8 +219,10 @@ interface RouteScreenProps {
 export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewModel }) => {
   const geocodeDebounceRef = useRef<NodeJS.Timeout | null>(null);
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
 
   const handleGetRoute = async () => {
+    Keyboard.dismiss();
     await routeViewModel.getRoute();
   };
 
@@ -242,7 +246,12 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
   return (
     <TouchableWithoutFeedback onPress={() => routeViewModel.clearSuggestions()}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        {/* paddingTop adds insets.top on top of the base padding so the title
+            clears the status bar / camera cutout instead of rendering under it
+            — the screen isn't wrapped in a SafeAreaView, and the app's status
+            bar is translucent (see AppNavigator), so nothing else accounts
+            for it here. */}
+        <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
           <View style={styles.headerAccent} />
           <View>
             <Text style={styles.headerTitle}>Route</Text>
@@ -288,7 +297,10 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
                   <TouchableOpacity
                     key={s.id}
                     style={styles.suggestionItem}
-                    onPress={() => routeViewModel.selectToSuggestion(s)}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      routeViewModel.selectToSuggestion(s);
+                    }}
                     activeOpacity={0.7}
                   >
                     <Ionicons name="location-outline" size={14} color={COLORS.textSecondary} />
@@ -351,71 +363,83 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
 
               <RoutePreviewMap routeViewModel={routeViewModel} />
 
-              {/* TIM zone detail cards */}
-              {routeViewModel.timHits.map((hit: TimHit) => {
-                const s = TIM_STYLE[hit.category];
-                const validFrom = formatDate(hit.validFrom);
-                const validUntil = formatDate(hit.validUntil);
-                return (
-                  <View key={hit.timId} style={[styles.timDetailCard, { backgroundColor: s.bg, borderColor: s.border }]}>
-                    {/* Header row */}
-                    <View style={styles.timDetailHeader}>
-                      <View style={[styles.timCategoryPill, { borderColor: s.border }]}>
-                        <Ionicons name={s.icon as any} size={11} color={s.accent} />
-                        <Text style={[styles.timCategoryLabel, { color: s.accent }]}>
-                          {hit.category.toUpperCase()}
-                        </Text>
+              {/* TIM zones — categorized separately from preemption zones */}
+              {routeViewModel.timHits.length > 0 && (
+                <View style={styles.zoneSection}>
+                  <Text style={styles.zoneSectionLabel}>
+                    TIM ZONES ({routeViewModel.timHits.length})
+                  </Text>
+                  {routeViewModel.timHits.map((hit: TimHit) => {
+                    const s = TIM_STYLE[hit.category];
+                    const validFrom = formatDate(hit.validFrom);
+                    const validUntil = formatDate(hit.validUntil);
+                    return (
+                      <View key={hit.timId} style={[styles.timDetailCard, { backgroundColor: s.bg, borderColor: s.border }]}>
+                        {/* Header row */}
+                        <View style={styles.timDetailHeader}>
+                          <View style={[styles.timCategoryPill, { borderColor: s.border }]}>
+                            <Ionicons name={s.icon as any} size={11} color={s.accent} />
+                            <Text style={[styles.timCategoryLabel, { color: s.accent }]}>
+                              {hit.category.toUpperCase()}
+                            </Text>
+                          </View>
+                          <SeverityDots value={hit.severity} />
+                        </View>
+
+                        {/* Type */}
+                        <Text style={styles.timTypeLabel}>{formatTimType(hit.timType)}</Text>
+
+                        {/* Description */}
+                        {hit.description !== null && (
+                          <Text style={styles.timDescription}>{hit.description}</Text>
+                        )}
+
+                        {/* ITIS codes */}
+                        {hit.itisCodes.length > 0 && (
+                          <View style={styles.timMetaRow}>
+                            <Text style={styles.timMetaKey}>ITIS</Text>
+                            <Text style={styles.timMetaValue}>{hit.itisCodes.join(', ')}</Text>
+                          </View>
+                        )}
+
+                        {/* Validity window */}
+                        {(validFrom || validUntil) && (
+                          <View style={styles.timMetaRow}>
+                            <Ionicons name="time-outline" size={11} color={COLORS.textDim} />
+                            <Text style={styles.timMetaValue}>
+                              {validFrom && validUntil
+                                ? `${validFrom} – ${validUntil}`
+                                : validFrom
+                                ? `From ${validFrom}`
+                                : `Until ${validUntil}`}
+                            </Text>
+                          </View>
+                        )}
                       </View>
-                      <SeverityDots value={hit.severity} />
-                    </View>
+                    );
+                  })}
+                </View>
+              )}
 
-                    {/* Type */}
-                    <Text style={styles.timTypeLabel}>{formatTimType(hit.timType)}</Text>
-
-                    {/* Description */}
-                    {hit.description !== null && (
-                      <Text style={styles.timDescription}>{hit.description}</Text>
-                    )}
-
-                    {/* ITIS codes */}
-                    {hit.itisCodes.length > 0 && (
-                      <View style={styles.timMetaRow}>
-                        <Text style={styles.timMetaKey}>ITIS</Text>
-                        <Text style={styles.timMetaValue}>{hit.itisCodes.join(', ')}</Text>
-                      </View>
-                    )}
-
-                    {/* Validity window */}
-                    {(validFrom || validUntil) && (
-                      <View style={styles.timMetaRow}>
-                        <Ionicons name="time-outline" size={11} color={COLORS.textDim} />
-                        <Text style={styles.timMetaValue}>
-                          {validFrom && validUntil
-                            ? `${validFrom} – ${validUntil}`
-                            : validFrom
-                            ? `From ${validFrom}`
-                            : `Until ${validUntil}`}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
-
-              {/* Preemption zone badges */}
+              {/* Preemption zones — categorized separately from TIM zones */}
               {routeViewModel.preemptionHits.length > 0 && (
-                <View style={[styles.timHitsRow, { marginTop: routeViewModel.timHits.length > 0 ? 6 : 0 }]}>
-                  {routeViewModel.preemptionHits.map((hit: PreemptionHit) => (
-                    <View
-                      key={hit.zoneId}
-                      style={[styles.timHitBadge, { backgroundColor: 'rgba(139,92,246,0.12)', borderColor: '#8B5CF6' }]}
-                    >
-                      <Ionicons name="flash" size={11} color="#8B5CF6" />
-                      <Text style={[styles.timHitBadgeText, { color: '#8B5CF6' }]}>
-                        {hit.zoneName.toUpperCase()}
-                      </Text>
-                    </View>
-                  ))}
+                <View style={styles.zoneSection}>
+                  <Text style={styles.zoneSectionLabel}>
+                    PREEMPTION ZONES ({routeViewModel.preemptionHits.length})
+                  </Text>
+                  <View style={styles.timHitsRow}>
+                    {routeViewModel.preemptionHits.map((hit: PreemptionHit) => (
+                      <View
+                        key={hit.zoneId}
+                        style={[styles.timHitBadge, { backgroundColor: 'rgba(139,92,246,0.12)', borderColor: '#8B5CF6' }]}
+                      >
+                        <Ionicons name="flash" size={11} color="#8B5CF6" />
+                        <Text style={[styles.timHitBadgeText, { color: '#8B5CF6' }]}>
+                          {hit.zoneName.toUpperCase()}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
               )}
 
@@ -534,6 +558,8 @@ const styles = StyleSheet.create({
   routeMeta:            { flexDirection: 'row', alignItems: 'baseline', gap: 8, marginBottom: 10 },
   activeRouteDuration:  { fontSize: 22, fontWeight: '700', color: COLORS.orange },
   activeRouteDistance:  { fontSize: 13, color: COLORS.textSecondary },
+  zoneSection:          { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: COLORS.border },
+  zoneSectionLabel:     { fontSize: 9, fontWeight: '800', color: COLORS.textDim, letterSpacing: 1, marginBottom: 6 },
   timHitsRow:           { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   timHitBadge:          { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 5, paddingHorizontal: 7, paddingVertical: 3, borderWidth: 1 },
   timHitBadgeText:      { fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },

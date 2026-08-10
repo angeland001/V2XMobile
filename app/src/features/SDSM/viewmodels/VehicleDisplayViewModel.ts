@@ -39,6 +39,9 @@ export class VehicleDisplayViewModel {
   vehicles: VehicleData[] = [];
   vrus: VRUData[] = [];
   isActive: boolean = false;
+  // [lat, lng]; null until the app gets a first GPS fix, in which case
+  // objects are shown unfiltered rather than being hidden pending location.
+  userLocation: [number, number] | null = null;
   lastUpdateTime: number = 0;
   updateCount: number = 0;
   error: string | null = null;
@@ -66,6 +69,12 @@ export class VehicleDisplayViewModel {
 
   // Reconnect settings
   private readonly RECONNECT_DELAY_MS = 2000;
+
+  // Only render objects within this range of the user, so the map isn't
+  // paying render/memory cost for SDSM activity nowhere near them.
+  // Configurable via Settings > SDSM Detection Radius; MainViewModel keeps
+  // this in sync with SettingsViewModel.sdsmDisplayRadiusM.
+  sdsmMaxRadiusM = 250;
 
   // Internal tracking with history
   private vehicleHistory: Map<number, VehicleWithHistory> = new Map();
@@ -343,7 +352,7 @@ export class VehicleDisplayViewModel {
   private updateObservableState(): void {
     this.cleanupVeryStaleObjects();
 
-    const displayableVehicles = Array.from(this.vehicleHistory.values())
+    let displayableVehicles = Array.from(this.vehicleHistory.values())
       .filter(v => v.isStable && v.confidenceLevel >= this.MIN_CONFIDENCE_TO_SHOW)
       .map(v => ({
         id: v.id,
@@ -353,7 +362,7 @@ export class VehicleDisplayViewModel {
         size: v.size
       }));
 
-    const displayableVRUs = Array.from(this.vruHistory.values())
+    let displayableVRUs = Array.from(this.vruHistory.values())
       .filter(v => v.isStable && v.confidenceLevel >= this.MIN_CONFIDENCE_TO_SHOW)
       .map(v => ({
         id: v.id,
@@ -361,6 +370,11 @@ export class VehicleDisplayViewModel {
         heading: this.getSmoothedHeading(v),
         speed: v.speed
       }));
+
+    if (this.userLocation) {
+      displayableVehicles = SDSMDataService.filterByRadius(displayableVehicles, this.userLocation, this.sdsmMaxRadiusM);
+      displayableVRUs = SDSMDataService.filterByRadius(displayableVRUs, this.userLocation, this.sdsmMaxRadiusM);
+    }
 
     runInAction(() => {
       this.vehicles = displayableVehicles;
@@ -432,6 +446,18 @@ export class VehicleDisplayViewModel {
       this.vrus = [];
       this.lastMessageData = null;
       this.error = null;
+    });
+  }
+
+  setUserLocation(location: [number, number]): void {
+    runInAction(() => {
+      this.userLocation = location;
+    });
+  }
+
+  setDisplayRadius(meters: number): void {
+    runInAction(() => {
+      this.sdsmMaxRadiusM = meters;
     });
   }
 

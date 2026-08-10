@@ -24,7 +24,7 @@ module.exports = {
     ],
     extra: {
       eas: {
-        projectId: '436b990f-8aef-487f-9dbe-699b2c4a9908',
+        projectId: '3ba8fe24-aaaa-4d1f-a84c-5901cc670a86',
       },
     },
     android: {

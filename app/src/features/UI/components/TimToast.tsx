@@ -154,6 +154,15 @@ const NAV_BANNER_GAP = 16;
 const AMBIENT_TOP_OFFSET = 90;
 const MAX_VISIBLE = 2;
 
+// Room reserved on the right for the Auto Preemption toggle / ETA chip
+// stack (see MapView.tsx) while navigating on a phone — both anchor
+// top-right in that state. The toast card is left-anchored, so shrinking
+// it to stay clear of that column (instead of always rendering at the
+// fixed CARD_WIDTH) is what keeps the two from overlapping on narrower
+// phones.
+const NAV_RIGHT_RESERVE_PX = 170;
+const MIN_CARD_WIDTH = 200;
+
 export const TimToast: React.FC<TimToastProps> = observer(
   ({ timService, routeViewModel, settingsViewModel, isNavigating = false }) => {
     const insets = useSafeAreaInsets();
@@ -246,11 +255,19 @@ export const TimToast: React.FC<TimToastProps> = observer(
     // MapView stacks at the same bottom-center spot (bottomCenterBaseline
     // 20) — those can be covered when a TIM alert is showing. Not
     // navigating: top-center, clear of the system nav bar at the bottom.
+    // Phone card width: shrink below the CARD_WIDTH default so it never
+    // reaches into the top-right toggle/ETA column while navigating (see
+    // NAV_RIGHT_RESERVE_PX above), and never overflows a narrow screen the
+    // rest of the time either.
+    const phoneCardWidth = isNavigating
+      ? Math.max(MIN_CARD_WIDTH, Math.min(CARD_WIDTH, screenWidth - 12 - NAV_RIGHT_RESERVE_PX))
+      : Math.min(CARD_WIDTH, screenWidth - 24);
+
     const positionStyle = isWide
       ? (isNavigating
           ? { bottom: insets.bottom + 6, left: (screenWidth - CARD_WIDTH) / 2 }
           : { top, left: (screenWidth - CARD_WIDTH) / 2 })
-      : { top, left: 12 };
+      : { top, left: 12, width: phoneCardWidth };
 
     return (
       <View

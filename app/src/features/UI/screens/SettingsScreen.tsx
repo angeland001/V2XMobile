@@ -7,6 +7,7 @@ import {
   StyleSheet,
   TouchableOpacity,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
 import { COLORS } from '../theme';
@@ -40,12 +41,14 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ label, sublabel, value, onToggle,
   </View>
 );
 
-interface SegmentedRowProps {
+interface SegmentedRowProps<T extends string | number> {
   label: string;
   sublabel?: string;
   icon: keyof typeof Ionicons.glyphMap;
-  value: PreemptionZoneDisplayMode;
-  onChange: (v: PreemptionZoneDisplayMode) => void;
+  value: T;
+  segments: { value: T; label: string }[];
+  onChange: (v: T) => void;
+  dimmed?: boolean;
 }
 
 const ZONE_DISPLAY_SEGMENTS: { value: PreemptionZoneDisplayMode; label: string }[] = [
@@ -54,35 +57,46 @@ const ZONE_DISPLAY_SEGMENTS: { value: PreemptionZoneDisplayMode; label: string }
   { value: 'off', label: 'Off' },
 ];
 
-const SegmentedRow: React.FC<SegmentedRowProps> = ({ label, sublabel, icon, value, onChange }) => (
-  <View style={styles.segmentedRow}>
-    <View style={styles.segmentedTop}>
-      <View style={[styles.rowIcon, { backgroundColor: value !== 'off' ? COLORS.orangeBg : COLORS.surface2 }]}>
-        <Ionicons name={icon} size={17} color={value !== 'off' ? COLORS.orange : COLORS.textSecondary} />
+const SDSM_RADIUS_SEGMENTS: { value: number; label: string }[] = [
+  { value: 100, label: '100m' },
+  { value: 250, label: '250m' },
+  { value: 500, label: '500m' },
+  { value: 1000, label: '1km' },
+];
+
+function SegmentedRow<T extends string | number>({
+  label, sublabel, icon, value, segments, onChange, dimmed = false,
+}: SegmentedRowProps<T>) {
+  return (
+    <View style={styles.segmentedRow}>
+      <View style={styles.segmentedTop}>
+        <View style={[styles.rowIcon, { backgroundColor: dimmed ? COLORS.surface2 : COLORS.orangeBg }]}>
+          <Ionicons name={icon} size={17} color={dimmed ? COLORS.textSecondary : COLORS.orange} />
+        </View>
+        <View style={styles.toggleText}>
+          <Text style={styles.toggleLabel}>{label}</Text>
+          {sublabel && <Text style={styles.toggleSub}>{sublabel}</Text>}
+        </View>
       </View>
-      <View style={styles.toggleText}>
-        <Text style={styles.toggleLabel}>{label}</Text>
-        {sublabel && <Text style={styles.toggleSub}>{sublabel}</Text>}
+      <View style={styles.segmentedControl}>
+        {segments.map((segment) => {
+          const selected = value === segment.value;
+          return (
+            <TouchableOpacity
+              key={segment.value}
+              style={[styles.segmentButton, selected && styles.segmentButtonActive]}
+              onPress={() => onChange(segment.value)}
+            >
+              <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextActive]}>
+                {segment.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
     </View>
-    <View style={styles.segmentedControl}>
-      {ZONE_DISPLAY_SEGMENTS.map((segment) => {
-        const selected = value === segment.value;
-        return (
-          <TouchableOpacity
-            key={segment.value}
-            style={[styles.segmentButton, selected && styles.segmentButtonActive]}
-            onPress={() => onChange(segment.value)}
-          >
-            <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextActive]}>
-              {segment.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  </View>
-);
+  );
+}
 
 interface InfoRowProps {
   label: string;
@@ -105,9 +119,15 @@ interface SettingsScreenProps {
 }
 
 export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ settingsViewModel }) => {
+  const insets = useSafeAreaInsets();
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      {/* paddingTop adds insets.top on top of the base padding so the title
+          clears the status bar / camera cutout instead of rendering under it
+          — the screen isn't wrapped in a SafeAreaView, and the app's status
+          bar is translucent (see AppNavigator), so nothing else accounts
+          for it here. */}
+      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerAccent} />
         <View>
           <Text style={styles.headerTitle}>Settings</Text>
@@ -175,7 +195,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
             label="Preemption Zones"
             sublabel="Full overlay, icon only, or hidden"
             value={settingsViewModel.preemptionZoneDisplay}
+            segments={ZONE_DISPLAY_SEGMENTS}
+            dimmed={settingsViewModel.preemptionZoneDisplay === 'off'}
             onChange={(v) => { settingsViewModel.preemptionZoneDisplay = v; }}
+          />
+          <View style={styles.cardDivider} />
+          <SegmentedRow
+            icon="radio-outline"
+            label="SDSM Detection Radius"
+            sublabel="Show vehicles & pedestrians within this range"
+            value={settingsViewModel.sdsmDisplayRadiusM}
+            segments={SDSM_RADIUS_SEGMENTS}
+            onChange={(v) => { settingsViewModel.sdsmDisplayRadiusM = v; }}
           />
         </View>
 

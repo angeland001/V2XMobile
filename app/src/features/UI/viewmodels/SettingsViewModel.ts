@@ -10,6 +10,7 @@ export class SettingsViewModel {
   showLanes = false;
   trafficLightPanelEnabled = true;
   preemptionZoneDisplay: PreemptionZoneDisplayMode = 'full';
+  sdsmDisplayRadiusM = 250;
 
   constructor() {
     makeAutoObservable(this);

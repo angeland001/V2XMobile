@@ -3,7 +3,7 @@ import React from 'react';
 import { View, Text, StyleSheet, LayoutChangeEvent } from 'react-native';
 import { CarIcon } from '../../../UI/components/icons/CarIcon';
 import { PedestrianIcon } from '../../../UI/components/icons/PedestrianIcon';
-import { MarkerPin } from '../../../UI/components/icons/MarkerPin';
+import { EntityBadge } from '../../../UI/components/icons/EntityBadge';
 import COLORS from '../../../UI/theme';
 
 interface MapLegendProps {
@@ -15,16 +15,16 @@ export const MapLegend: React.FC<MapLegendProps> = ({ top, onLayout }) => {
   return (
     <View style={[styles.container, { top }]} onLayout={onLayout}>
       <View style={styles.legendItem}>
-        <MarkerPin size={22} iconSize={10} color={COLORS.orange}>
-          <CarIcon size={10} color={COLORS.white} />
-        </MarkerPin>
+        <EntityBadge size={16} iconSize={9} color={COLORS.orange}>
+          <CarIcon size={9} color={COLORS.white} />
+        </EntityBadge>
         <Text style={styles.legendText}>Vehicle</Text>
       </View>
 
       <View style={styles.legendItem}>
-        <MarkerPin size={20} iconSize={9} color={COLORS.blue}>
-          <PedestrianIcon size={9} color={COLORS.white} />
-        </MarkerPin>
+        <EntityBadge size={14} iconSize={8} color={COLORS.blue}>
+          <PedestrianIcon size={8} color={COLORS.white} />
+        </EntityBadge>
         <Text style={styles.legendText}>Pedestrian</Text>
       </View>
     </View>

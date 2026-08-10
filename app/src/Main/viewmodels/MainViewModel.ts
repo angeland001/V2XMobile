@@ -67,6 +67,7 @@ export class MainViewModel {
  
   
   private startApisOnLaunch(): void {
+    this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
     if (TESTING_CONFIG.ENABLE_SDSM_API) {
       this.vehicleDisplayViewModel.setApiUrl('georgia');
       this.vehicleDisplayViewModel.start();
@@ -103,16 +104,23 @@ export class MainViewModel {
     const startWhenReady = () => {
       if (this.userLocation.latitude !== 0 && this.userLocation.longitude !== 0) {
         this.spatViewModel.setUserPosition([
-          this.userLocation.latitude, 
+          this.userLocation.latitude,
           this.userLocation.longitude
         ]);
-        
+        this.vehicleDisplayViewModel.setUserLocation([
+          this.userLocation.latitude,
+          this.userLocation.longitude
+        ]);
+        this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
+
         this.spatViewModel.startMonitoring();
 
         this.positionSyncInterval = setInterval(() => {
           const { latitude, longitude } = this.userLocation;
           if (latitude !== 0 && longitude !== 0) {
             this.spatViewModel.setUserPosition([latitude, longitude]);
+            this.vehicleDisplayViewModel.setUserLocation([latitude, longitude]);
+            this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
             if (!this.routeViewModel.isNavigating && this.mapViewModel.isMoving) {
               // While navigating, RouteViewModel alerts only for zones the route
               // actually crosses (see RouteViewModel.checkTimZoneAlerts). While

@@ -539,8 +539,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const [pedestrianWarningHeight, setPedestrianWarningHeight] = useState(0);
 
     // Legend/overlay menu only ever render while NOT navigating (see below),
-    // so this base never needs to account for the nav banner.
-    const topRightBase = 16;
+    // so this base never needs to account for the nav banner. It does need
+    // insets.top though — without it the legend sits under the status bar
+    // (clock/battery/wifi icons) on phones with a tall status bar, e.g. Pixels.
+    const topRightBase = insets.top + 16;
     // The tab bar is hidden while navigating (see MainNavigator), so the
     // bottom-center stack (recenter button, status toast) only needs to
     // clear it when the tab bar is actually on screen.
@@ -549,21 +551,28 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     // top edge (both float at the same insets.top + 10); on a phone the
     // banner spans the full width, so the chip docks below it instead.
     const etaBannerTop = isWide ? insets.top + 10 : navBannerHeight + 10;
-    // Auto Preemption only relocates to the right (stacked under the ETA
-    // chip) while navigating on a wide display — that's the one case where
-    // it collides with the traffic light panel on the left. Otherwise it
-    // keeps its original top-left spot.
-    const preemptionDockRight = isWide && isNavigating;
+    // Auto Preemption relocates to the right (stacked under the ETA chip)
+    // any time navigation is active, on a phone as well as a wide car
+    // display — on a wide display that's what clears the traffic light
+    // panel on the left; on a phone it's what keeps the toggle out of the
+    // TIM zone alert cards (TimToast), which are left-anchored below the
+    // nav banner in that same state. Otherwise it keeps its original
+    // top-left spot.
+    const preemptionDockRight = isNavigating;
+    // Left-docked spot also needs insets.top — same status-bar collision as
+    // topRightBase above, since this is the toggle's default top-left position.
     const preemptionTop = preemptionDockRight
       ? navTopRightStack.offsetFor('preemptionToggle', etaBannerTop)
-      : 30 + (isNavigating ? navBannerHeight : 0);
-    // On a wide car display the toggle only ever leaves its left-docked spot
+      : insets.top + 30;
+    // On a wide car display, the toggle only leaves its left-docked spot
     // while navigating (preemptionDockRight above) — any other time on that
     // display it stays top-left, in the same column the traffic light panel
     // used to bottom-anchor into, on a screen too short for both to fit
     // without overlapping. Stack the panel below the toggle's real height
     // instead in that one case; a normal phone has enough vertical room that
-    // top-anchored toggle and bottom-anchored panel never meet.
+    // top-anchored toggle and bottom-anchored panel never meet. (On a phone
+    // preemptionDockRight is now also true while navigating, but this line
+    // only ever fires for the wide+non-navigating case since `isWide` gates it.)
     const stackTrafficLightBelowToggle = isWide && !preemptionDockRight;
     const trafficLightPanelTop = stackTrafficLightBelowToggle
       ? leftStack.offsetFor('trafficLightPanel', preemptionTop)

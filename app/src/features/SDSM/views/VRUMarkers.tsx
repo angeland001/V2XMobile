@@ -5,7 +5,7 @@ import { observer } from 'mobx-react-lite';
 import { VRUData } from '../models/SDSMTypes';
 import { isValidLngLat } from '../../../core/maps/coordinates';
 import { PedestrianIcon } from '../../UI/components/icons/PedestrianIcon';
-import { MarkerPin, MARKER_PIN_TIP_ANCHOR } from '../../UI/components/icons/MarkerPin';
+import { EntityBadge } from '../../UI/components/icons/EntityBadge';
 import COLORS from '../../UI/theme';
 
 interface VRUMarkersProps {
@@ -28,11 +28,11 @@ export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive,
         <MapboxGL.MarkerView
           key={String(vru.id)}
           coordinate={getMapCoordinates(vru)}
-          anchor={{ x: 0.5, y: MARKER_PIN_TIP_ANCHOR }}
+          anchor={{ x: 0.5, y: 0.5 }}
         >
-          <MarkerPin size={30} iconSize={13} color={COLORS.blue}>
-            <PedestrianIcon size={13} color={COLORS.white} />
-          </MarkerPin>
+          <EntityBadge size={14} iconSize={8} color={COLORS.blue}>
+            <PedestrianIcon size={8} color={COLORS.white} />
+          </EntityBadge>
         </MapboxGL.MarkerView>
       ))}
     </>

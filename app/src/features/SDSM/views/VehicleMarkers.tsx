@@ -5,7 +5,7 @@ import { observer } from 'mobx-react-lite';
 import { VehicleDisplayViewModel } from '../viewmodels/VehicleDisplayViewModel';
 import { isValidLngLat } from '../../../core/maps/coordinates';
 import { CarIcon } from '../../UI/components/icons/CarIcon';
-import { MarkerPin, MARKER_PIN_TIP_ANCHOR } from '../../UI/components/icons/MarkerPin';
+import { EntityBadge } from '../../UI/components/icons/EntityBadge';
 import COLORS from '../../UI/theme';
 
 interface VehicleMarkersProps {
@@ -26,11 +26,11 @@ export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewMod
         <MapboxGL.MarkerView
           key={String(vehicle.id)}
           coordinate={viewModel.getMapCoordinates(vehicle)}
-          anchor={{ x: 0.5, y: MARKER_PIN_TIP_ANCHOR }}
+          anchor={{ x: 0.5, y: 0.5 }}
         >
-          <MarkerPin size={34} iconSize={15} color={COLORS.orange}>
-            <CarIcon size={15} color={COLORS.white} />
-          </MarkerPin>
+          <EntityBadge size={16} iconSize={9} color={COLORS.orange}>
+            <CarIcon size={9} color={COLORS.white} />
+          </EntityBadge>
         </MapboxGL.MarkerView>
       ))}
     </>

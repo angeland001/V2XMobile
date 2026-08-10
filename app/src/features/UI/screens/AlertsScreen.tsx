@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { observer } from 'mobx-react-lite';
 import { Ionicons } from '@expo/vector-icons';
 import MapboxGL from '@rnmapbox/maps';
@@ -238,11 +239,17 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = observer(({ timService 
     timService.clearUnreadCount();
   }, []);
 
+  const insets = useSafeAreaInsets();
   const log = timService.alertLog;
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      {/* paddingTop adds insets.top on top of the base padding so the title
+          clears the status bar / camera cutout instead of rendering under it
+          — the screen isn't wrapped in a SafeAreaView, and the app's status
+          bar is translucent (see AppNavigator), so nothing else accounts
+          for it here. */}
+      <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerAccent} />
         <View>
           <Text style={styles.headerTitle}>Alert Log</Text>
