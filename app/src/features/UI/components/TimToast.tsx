@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useWindowDimensions, useColorScheme } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -14,32 +14,41 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TimService } from '../../TIM/services/TimService';
 import { RouteViewModel } from '../../Route/viewmodels/RouteViewModel';
 import { SettingsViewModel } from '../viewmodels/SettingsViewModel';
+import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 
 type TimCategory = 'safety' | 'regulatory' | 'informational';
 
-// Solid, saturated per-category background (not a neutral black/dark card) —
-// legibility comes from three redundant signals instead of one: text colored
-// for contrast against its own card with a matching drop-shadow (holds up
-// even if a background render glitch ever washes out the fill), a bold
-// category color, and the icon+label pair. All text colors below sit at
-// >= 5:1 contrast against their card.
+// The banner itself is neutral (white/dark, tracks the app's color scheme) —
+// category is now signaled only through the icon and its tinted badge, not
+// the whole card. Card colors below are the icon accent only.
 const CATEGORY_STYLE: Record<TimCategory, {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  bg: string;
-  border: string;
-  text: string;
-  shadow: string;
+  accent: string;
 }> = {
-  // Bright, high-visibility yellow — matches the caution-sign convention
-  // regulatory zones (speed/no-pass) call for, so it reads distinctly from
-  // the red safety and blue informational cards at a glance. Dark text
-  // (instead of the white used elsewhere) is what keeps it >= 5:1 contrast
-  // against a light fill this saturated.
-  safety:        { icon: 'warning',            label: 'Safety',      bg: '#B91C1C', border: '#FCA5A5', text: '#FFFFFF', shadow: 'rgba(0,0,0,0.55)' },
-  regulatory:    { icon: 'ban',                 label: 'Regulatory',  bg: '#FDE047', border: '#CA8A04', text: '#1A1A2E', shadow: 'rgba(255,255,255,0.6)' },
-  informational: { icon: 'information-circle',  label: 'Info',        bg: '#1D4ED8', border: '#93C5FD', text: '#FFFFFF', shadow: 'rgba(0,0,0,0.55)' },
+  safety:        { icon: 'warning',            label: 'Safety',      accent: '#DC2626' },
+  regulatory:    { icon: 'ban',                 label: 'Regulatory',  accent: '#CA8A04' },
+  informational: { icon: 'information-circle',  label: 'Info',        accent: '#2563EB' },
 };
+
+// Neutral banner chrome per color scheme — background, border, and text all
+// come from here so the card itself carries no category color.
+const THEME = {
+  light: {
+    bg: '#FFFFFF',
+    border: '#E5E7EB',
+    text: '#1A1A2E',
+    textSecondary: '#6B7280',
+    shadow: 'rgba(0,0,0,0.2)',
+  },
+  dark: {
+    bg: '#1E2030',
+    border: '#3A3D52',
+    text: '#F5F6FA',
+    textSecondary: '#A1A6BE',
+    shadow: 'rgba(0,0,0,0.5)',
+  },
+} as const;
 
 interface DisplayItem {
   key: string;
@@ -60,6 +69,7 @@ interface TimAlertCardProps {
   item: DisplayItem;
   onAutoDismiss?: () => void;
   onDismiss?: () => void;
+  isTablet?: boolean;
 }
 
 // Ephemeral (ambient) cards read time scales with message length so a longer
@@ -78,7 +88,9 @@ const URGENT_DISTANCE_M = 150;
 // Card enters/exits from off the left edge of the screen (container is left-anchored).
 const OFFSCREEN_X = -320;
 
-const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDismiss }) => {
+const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDismiss, isTablet = false }) => {
+  const scheme = useColorScheme();
+  const neutral = scheme === 'dark' ? THEME.dark : THEME.light;
   const translateX = useSharedValue(OFFSCREEN_X);
   const opacity = useSharedValue(0);
 
@@ -119,20 +131,20 @@ const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDism
   return (
     <Animated.View style={animatedStyle}>
       <Pressable onPress={onDismiss} disabled={!onDismiss}>
-        <View style={[styles.alert, { backgroundColor: cfg.bg, borderColor: cfg.border, borderWidth: isUrgent ? 3 : 1 }]}>
-          <View style={[styles.iconWrap, { backgroundColor: `${cfg.text}33` }]}>
-            <Ionicons name={cfg.icon} size={15} color={cfg.text} />
+        <View style={[styles.alert, { backgroundColor: neutral.bg, borderColor: neutral.border, borderWidth: isUrgent ? 3 : 1 }]}>
+          <View style={[styles.iconWrap, isTablet && styles.iconWrapTablet, { backgroundColor: `${cfg.accent}26` }]}>
+            <Ionicons name={cfg.icon} size={isTablet ? 19 : 15} color={cfg.accent} />
           </View>
           <View style={styles.textWrap}>
             <View style={styles.titleRow}>
-              <Text style={[styles.title, { color: cfg.text, textShadowColor: cfg.shadow }]}>
+              <Text style={[styles.title, isTablet && styles.titleTablet, { color: neutral.text, textShadowColor: neutral.shadow }]}>
                 {cfg.label.toUpperCase()}
               </Text>
               {item.distanceM != null && (
-                <Text style={[styles.distance, { color: cfg.text, textShadowColor: cfg.shadow }]}>{formatDistanceMeters(item.distanceM)} ahead</Text>
+                <Text style={[styles.distance, isTablet && styles.distanceTablet, { color: neutral.textSecondary, textShadowColor: neutral.shadow }]}>{formatDistanceMeters(item.distanceM)} ahead</Text>
               )}
             </View>
-            <Text style={[styles.description, { color: cfg.text, textShadowColor: cfg.shadow }]} numberOfLines={2}>{item.message}</Text>
+            <Text style={[styles.description, isTablet && styles.descriptionTablet, { color: neutral.text, textShadowColor: neutral.shadow }]} numberOfLines={2}>{item.message}</Text>
           </View>
         </View>
       </Pressable>
@@ -173,6 +185,7 @@ export const TimToast: React.FC<TimToastProps> = observer(
     // bottom; bottom-center once navigation is active, since the top band
     // is then occupied by NavigationBanner + PedestrianWarning.
     const isWide = screenWidth > screenHeight * 1.3;
+    const { isTablet } = useResponsiveLayout();
     // Nav-mode cards are persistent (computed fresh from the route each tick,
     // not a dismissable queue) — track user-dismissed keys locally so a tap
     // can hide one without waiting for the user to enter or leave the zone.
@@ -259,14 +272,15 @@ export const TimToast: React.FC<TimToastProps> = observer(
     // reaches into the top-right toggle/ETA column while navigating (see
     // NAV_RIGHT_RESERVE_PX above), and never overflows a narrow screen the
     // rest of the time either.
+    const cardWidth = isTablet ? TABLET_CARD_WIDTH : CARD_WIDTH;
     const phoneCardWidth = isNavigating
-      ? Math.max(MIN_CARD_WIDTH, Math.min(CARD_WIDTH, screenWidth - 12 - NAV_RIGHT_RESERVE_PX))
-      : Math.min(CARD_WIDTH, screenWidth - 24);
+      ? Math.max(MIN_CARD_WIDTH, Math.min(cardWidth, screenWidth - 12 - NAV_RIGHT_RESERVE_PX))
+      : Math.min(cardWidth, screenWidth - 24);
 
     const positionStyle = isWide
       ? (isNavigating
-          ? { bottom: insets.bottom + 6, left: (screenWidth - CARD_WIDTH) / 2 }
-          : { top, left: (screenWidth - CARD_WIDTH) / 2 })
+          ? { bottom: insets.bottom + 6, left: (screenWidth - cardWidth) / 2, width: cardWidth }
+          : { top, left: (screenWidth - cardWidth) / 2, width: cardWidth })
       : { top, left: 12, width: phoneCardWidth };
 
     return (
@@ -280,6 +294,7 @@ export const TimToast: React.FC<TimToastProps> = observer(
             item={item}
             onAutoDismiss={!item.persistent ? () => timService.dismissToast(item.key) : undefined}
             onDismiss={() => (item.persistent ? dismiss(item.key) : timService.dismissToast(item.key))}
+            isTablet={isTablet}
           />
         ))}
       </View>
@@ -287,8 +302,8 @@ export const TimToast: React.FC<TimToastProps> = observer(
   },
 );
 
-// textShadowColor is supplied per-item (see `cfg.shadow`) since it must
-// track each category's text color to stay legible.
+// textShadowColor is supplied per-item (see `neutral.shadow`) since it must
+// track the active color scheme to stay legible.
 const TEXT_SHADOW = {
   textShadowOffset: { width: 0, height: 1 },
   textShadowRadius: 2,
@@ -299,6 +314,9 @@ const TEXT_SHADOW = {
 // the nested `flex: 1` on textWrap against — it collapses to zero width
 // and every Text inside becomes genuinely invisible, independent of color.
 const CARD_WIDTH = 280;
+// Tablet keeps the toast floating (transient, not worth a persistent dock
+// spot) but gives it more room than the phone/car-HU width above.
+const TABLET_CARD_WIDTH = 380;
 
 const styles = StyleSheet.create({
   container: {
@@ -332,6 +350,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexShrink: 0,
   },
+  iconWrapTablet: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+  },
   textWrap: {
     flex: 1,
     flexShrink: 1,
@@ -350,16 +373,26 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     ...TEXT_SHADOW,
   },
+  titleTablet: {
+    fontSize: 14,
+  },
   distance: {
     fontSize: 10,
     fontWeight: '700',
     ...TEXT_SHADOW,
+  },
+  distanceTablet: {
+    fontSize: 12,
   },
   description: {
     fontSize: 13,
     lineHeight: 18,
     fontWeight: '600',
     ...TEXT_SHADOW,
+  },
+  descriptionTablet: {
+    fontSize: 15,
+    lineHeight: 21,
   },
 });
 

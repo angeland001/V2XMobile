@@ -38,7 +38,19 @@ export function useStackedOffset(order: readonly string[], gap: number = 8) {
     [heights, order, gap],
   );
 
-  return { onLayout, offsetFor, resetHeight };
+  // Sum of every member's real height plus the gaps between them — lets a
+  // caller center the whole stack as one block instead of anchoring it to
+  // a fixed edge.
+  const totalHeight = useCallback((): number => {
+    let total = 0;
+    order.forEach((k, i) => {
+      total += heights[k] ?? 0;
+      if (i < order.length - 1) total += gap;
+    });
+    return total;
+  }, [heights, order, gap]);
+
+  return { onLayout, offsetFor, resetHeight, totalHeight };
 }
 
 export default useStackedOffset;

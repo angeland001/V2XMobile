@@ -6,6 +6,7 @@ import { VehicleDisplayViewModel } from '../viewmodels/VehicleDisplayViewModel';
 import { isValidLngLat } from '../../../core/maps/coordinates';
 import { CarIcon } from '../../UI/components/icons/CarIcon';
 import { EntityBadge } from '../../UI/components/icons/EntityBadge';
+import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 import COLORS from '../../UI/theme';
 
 interface VehicleMarkersProps {
@@ -13,6 +14,8 @@ interface VehicleMarkersProps {
 }
 
 export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewModel }) => {
+  const { markerScale } = useResponsiveLayout();
+
   if (!viewModel?.isActive || viewModel.vehicles.length === 0) return null;
 
   const vehicles = viewModel.vehicles.filter((vehicle) => {
@@ -28,8 +31,8 @@ export const VehicleMarkers: React.FC<VehicleMarkersProps> = observer(({ viewMod
           coordinate={viewModel.getMapCoordinates(vehicle)}
           anchor={{ x: 0.5, y: 0.5 }}
         >
-          <EntityBadge size={16} iconSize={9} color={COLORS.orange}>
-            <CarIcon size={9} color={COLORS.white} />
+          <EntityBadge size={16 * markerScale} iconSize={9 * markerScale} color={COLORS.orange}>
+            <CarIcon size={9 * markerScale} color={COLORS.white} />
           </EntityBadge>
         </MapboxGL.MarkerView>
       ))}

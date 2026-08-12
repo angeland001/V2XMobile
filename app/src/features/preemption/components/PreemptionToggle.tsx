@@ -1,5 +1,6 @@
 import React from 'react';
 import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 
 interface PreemptionToggleProps {
   enabled: boolean;
@@ -13,17 +14,19 @@ interface PreemptionToggleProps {
 }
 
 export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onToggle, top, dockRight = false, onLayout }) => {
+  const { isTablet } = useResponsiveLayout();
+
   return (
     <View
       style={[styles.container, dockRight ? styles.containerRight : styles.containerLeft, { top }]}
       onLayout={onLayout}
     >
-      <Text style={styles.label}>Auto Preemption</Text>
+      <Text style={[styles.label, isTablet && styles.labelTablet]}>Auto Preemption</Text>
       <Pressable
-        style={[styles.toggle, enabled ? styles.toggleOn : styles.toggleOff]}
+        style={[styles.toggle, isTablet && styles.toggleTablet, enabled ? styles.toggleOn : styles.toggleOff]}
         onPress={() => onToggle(!enabled)}
       >
-        <View style={[styles.thumb, enabled ? styles.thumbOn : styles.thumbOff]} />
+        <View style={[styles.thumb, isTablet && styles.thumbTablet, enabled ? styles.thumbOn : styles.thumbOff]} />
       </Pressable>
     </View>
   );
@@ -51,6 +54,11 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 999,
   },
+  labelTablet: {
+    fontSize: 15,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+  },
   toggle: {
     width: 56,
     height: 32,
@@ -63,6 +71,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
   },
+  toggleTablet: {
+    width: 72,
+    height: 40,
+    borderRadius: 20,
+  },
   toggleOn: {
     backgroundColor: '#10b981',
   },
@@ -74,6 +87,11 @@ const styles = StyleSheet.create({
     height: 28,
     borderRadius: 14,
     backgroundColor: '#ffffff',
+  },
+  thumbTablet: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
   },
   thumbOn: {
     alignSelf: 'flex-end',

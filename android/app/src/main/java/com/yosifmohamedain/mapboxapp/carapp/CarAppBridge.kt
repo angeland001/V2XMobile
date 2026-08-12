@@ -2,34 +2,41 @@ package com.yosifmohamedain.mapboxapp.carapp
 
 object CarAppBridge {
 
-    data class SpatState(
+    // updatedAtMs backs PreemptionMessageScreen's own staleness watchdog: if
+    // the JS side stops pushing entirely (not just a stale heartbeat, but the
+    // whole bridge going silent — JS thread stalled, app backgrounded hard,
+    // etc.) the screen must stop trusting this value on its own, without
+    // waiting for another update that may never come.
+    data class PreemptionState(
         val statusText: String,
         val color: String,
-        val intersection: String?
+        val zoneName: String?,
+        val updatedAtMs: Long = System.currentTimeMillis()
     )
 
     @Volatile
-    var latest: SpatState = SpatState(statusText = "NO SIGNAL", color = "#808080", intersection = null)
+    var latestPreemption: PreemptionState =
+        PreemptionState(statusText = "No Active Zone", color = "gray", zoneName = null)
         private set
 
-    private val listeners = mutableSetOf<() -> Unit>()
+    private val preemptionListeners = mutableSetOf<() -> Unit>()
 
-    fun update(state: SpatState) {
-        latest = state
-        synchronized(listeners) {
-            listeners.toList()
+    fun updatePreemption(state: PreemptionState) {
+        latestPreemption = state
+        synchronized(preemptionListeners) {
+            preemptionListeners.toList()
         }.forEach { it() }
     }
 
-    fun addListener(listener: () -> Unit) {
-        synchronized(listeners) {
-            listeners.add(listener)
+    fun addPreemptionListener(listener: () -> Unit) {
+        synchronized(preemptionListeners) {
+            preemptionListeners.add(listener)
         }
     }
 
-    fun removeListener(listener: () -> Unit) {
-        synchronized(listeners) {
-            listeners.remove(listener)
+    fun removePreemptionListener(listener: () -> Unit) {
+        synchronized(preemptionListeners) {
+            preemptionListeners.remove(listener)
         }
     }
 }

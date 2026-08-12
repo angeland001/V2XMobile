@@ -8,7 +8,12 @@
       "WebFetch(domain:www.npmjs.com)",
       "Bash(cd:*)",
       "Bash(npx tsc *)",
-      "Bash(npx eas-cli *)"
+      "Bash(npx eas-cli *)",
+      "Bash(/c/Users/rvj412/AppData/Local/Android/Sdk/platform-tools/adb.exe -s R5GL70N8NFE shell run-as com.yosifmohamedain.mapboxapp ls -la /data/app/~~NastGVnReUQinTsUE2V4DQ==/com.yosifmohamedain.mapboxapp-5EqN2ZZRX3eJ792jg1ATdA==/lib/)",
+      "Bash(/c/Users/rvj412/AppData/Local/Android/Sdk/platform-tools/adb.exe -s R5GL70N8NFE shell dumpsys package com.yosifmohamedain.mapboxapp)",
+      "Bash(git check-ignore *)",
+      "Bash(curl -s http://localhost:8081/status)",
+      "Bash(./gradlew.bat :app:compileDebugKotlin --console=plain)"
     ]
   }
 }

@@ -9,12 +9,12 @@ class CarBridgeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     override fun getName(): String = "CarBridge"
 
     @ReactMethod
-    fun updateSpatState(statusText: String, color: String, intersection: String) {
-        CarAppBridge.update(
-            CarAppBridge.SpatState(
+    fun updatePreemptionState(statusText: String, color: String, zoneName: String) {
+        CarAppBridge.updatePreemption(
+            CarAppBridge.PreemptionState(
                 statusText = statusText,
                 color = color,
-                intersection = intersection.ifEmpty { null }
+                zoneName = zoneName.ifEmpty { null }
             )
         )
     }

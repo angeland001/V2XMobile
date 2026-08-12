@@ -6,6 +6,7 @@ import { VRUData } from '../models/SDSMTypes';
 import { isValidLngLat } from '../../../core/maps/coordinates';
 import { PedestrianIcon } from '../../UI/components/icons/PedestrianIcon';
 import { EntityBadge } from '../../UI/components/icons/EntityBadge';
+import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 import COLORS from '../../UI/theme';
 
 interface VRUMarkersProps {
@@ -15,6 +16,8 @@ interface VRUMarkersProps {
 }
 
 export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive, getMapCoordinates }) => {
+  const { markerScale } = useResponsiveLayout();
+
   if (!isActive || vrus.length === 0) return null;
 
   const visibleVrus = vrus.filter((vru) => {
@@ -30,8 +33,8 @@ export const VRUMarkers: React.FC<VRUMarkersProps> = observer(({ vrus, isActive,
           coordinate={getMapCoordinates(vru)}
           anchor={{ x: 0.5, y: 0.5 }}
         >
-          <EntityBadge size={14} iconSize={8} color={COLORS.blue}>
-            <PedestrianIcon size={8} color={COLORS.white} />
+          <EntityBadge size={14 * markerScale} iconSize={8 * markerScale} color={COLORS.blue}>
+            <PedestrianIcon size={8 * markerScale} color={COLORS.white} />
           </EntityBadge>
         </MapboxGL.MarkerView>
       ))}

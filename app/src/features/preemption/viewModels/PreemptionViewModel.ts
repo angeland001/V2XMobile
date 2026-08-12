@@ -37,6 +37,16 @@ export class PreemptionViewModel {
   // TrafficLightPanel render for the same window after zone exit.
   private static readonly EXIT_GRACE_MS = 3000;
 
+  // Tracks the most recent successful start/heartbeat response. Drives
+  // feedStale below, which the Android Auto screen (see CarBridgeService.ts)
+  // uses to fall back to "Status Unavailable" instead of continuing to show
+  // a live-looking status once the preempt bridge has gone quiet.
+  private lastHeartbeatSuccessAt: number | null = null;
+  feedStale = false;
+  // Mirrors SpatWebSocketService.STALE_MS so both feeds use the same
+  // definition of "stale" across the app.
+  private static readonly HEARTBEAT_STALE_MS = 5000;
+
   private previousPosition: [number, number] | null = null;
   private wasInsideZone = false;
   private validEntry = false;
@@ -262,6 +272,7 @@ export class PreemptionViewModel {
         this.ssmStatus = result.ssmStatus;
         this.requestedSignalGroup = config.signalGroup;
         this.controllerSignalState = null;
+        this.lastHeartbeatSuccessAt = Date.now();
         console.log(
           '[Preemption] START successful. Zone:',
           zone.name,
@@ -305,6 +316,9 @@ export class PreemptionViewModel {
       const elapsed = Date.now() - this.heartbeatCycleStart;
       runInAction(() => {
         this.heartbeatProgress = Math.min(1, elapsed / 1500);
+        this.feedStale =
+          this.lastHeartbeatSuccessAt !== null &&
+          Date.now() - this.lastHeartbeatSuccessAt > PreemptionViewModel.HEARTBEAT_STALE_MS;
       });
     }, 100);
 
@@ -318,7 +332,8 @@ export class PreemptionViewModel {
     this.heartbeatInterval = null;
     this.progressInterval = null;
     this.heartbeatCycleStart = null;
-    runInAction(() => { this.heartbeatProgress = 0; });
+    this.lastHeartbeatSuccessAt = null;
+    runInAction(() => { this.heartbeatProgress = 0; this.feedStale = false; });
     console.log('[Preemption] Heartbeat stopped');
   }
 
@@ -515,8 +530,10 @@ export class PreemptionViewModel {
           if (status && status !== this.ssmStatus) {
             runInAction(() => { this.ssmStatus = status; });
           }
+          this.lastHeartbeatSuccessAt = Date.now();
           runInAction(() => {
             this.controllerSignalState = typeof data.current_state === 'number' ? data.current_state : null;
+            this.feedStale = false;
           });
           return true;
         },
@@ -541,6 +558,59 @@ export class PreemptionViewModel {
     const requested = this.displayRequestedSignalGroup;
     if (state === null || requested === null) return null;
     return state === requested ? 'green' : 'red';
+  }
+
+  // ============ Android Auto bridge display ============
+  // Collapses the underlying zone/session/heartbeat state into the coarse
+  // state shown on the Android Auto screen (Approaching/Requested → Granted/
+  // Active → Cleared, plus Idle and a degraded "Status Unavailable" branch)
+  // — see CarBridgeService.ts / PreemptionMessageScreen.kt. Deliberately
+  // coarser than the phone UI: no TIM alerts, no numeric SPaT phase, and no
+  // status is shown once the underlying feed (feedStale) has gone quiet.
+  //
+  // `ssmStatus` (live) vs `displaySsmStatus` (lingers for EXIT_GRACE_MS after
+  // a session ends) distinguishes an active session from the just-cleared
+  // grace window: live === null but display !== null means "just cleared."
+  get carStatusText(): string {
+    const isLive = this.ssmStatus !== null;
+    const status = this.displaySsmStatus;
+
+    if (isLive && this.feedStale) return 'Status Unavailable';
+    if (!isLive && status !== null) return 'Preemption Cleared';
+
+    switch (status) {
+      case 'requesting':
+        return 'Requesting Preemption';
+      case 'granted':
+        return this.controllerLight === 'green' ? 'Preemption Active' : 'Preemption Granted';
+      case 'cancelled':
+        return 'Preemption Denied';
+      default:
+        return this.insideZone ? 'Entering Zone' : 'No Active Zone';
+    }
+  }
+
+  get carStatusColor(): 'green' | 'yellow' | 'red' | 'gray' {
+    const isLive = this.ssmStatus !== null;
+    const status = this.displaySsmStatus;
+
+    if (isLive && this.feedStale) return 'gray';
+    if (!isLive && status !== null) return 'gray';
+
+    switch (status) {
+      case 'requesting':
+        return 'yellow';
+      case 'granted':
+        return this.controllerLight === 'green' ? 'green' : 'yellow';
+      case 'cancelled':
+        return 'red';
+      default:
+        return 'gray';
+    }
+  }
+
+  get carZoneName(): string {
+    return this.displayActiveZoneName ?? 'V2X Preemption';
   }
 
   private async callClear(sessionId: string): Promise<void> {

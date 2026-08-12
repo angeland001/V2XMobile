@@ -42,6 +42,19 @@ export interface RouteStep {
 export interface PreemptionHit {
   zoneId: string;
   zoneName: string;
+  polygon: [number, number][];
+}
+
+// One candidate route returned by the Directions API (alternatives=true) —
+// everything needed to both draw it on the map and, if selected, become the
+// active route (see applyRouteOption).
+export interface RouteOption {
+  coordinates: [number, number][];
+  distanceMeters: number;
+  durationSeconds: number;
+  distanceLabel: string;
+  durationLabel: string;
+  steps: RouteStep[];
 }
 
 const CHATT_PROXIMITY = '-85.3099,35.0456';
@@ -67,6 +80,10 @@ export class RouteViewModel {
   userLocation: [number, number] | null = null;
 
   // ── Route overview ────────────────────────────────────────────────────────
+  // All candidate routes from the last fetch (Directions alternatives=true);
+  // routeCoordinates/routeDistance/etc. below always mirror routeOptions[selectedRouteIndex].
+  routeOptions: RouteOption[] = [];
+  selectedRouteIndex: number = 0;
   routeCoordinates: [number, number][] = [];
   // routeCoordinates trimmed to the portion still ahead of the user — the
   // traveled portion behind them is dropped as they pass it. Updated in
@@ -248,6 +265,8 @@ export class RouteViewModel {
 
   clearRoute(): void {
     VoiceGuidanceService.stop();
+    this.routeOptions = [];
+    this.selectedRouteIndex = 0;
     this.routeCoordinates = [];
     this.remainingRouteCoordinates = [];
     this.routeDistance = '';
@@ -274,6 +293,28 @@ export class RouteViewModel {
     this.preemptionHits = [];
     this.approachingTimZones = [];
     this.approachingTimZoneDistancesM = new Map();
+  }
+
+  // Swaps in an alternate route the user tapped (chip or map line) during
+  // preview. Mirrors the fields fetchDirections sets for the primary route,
+  // then re-runs the V2X analysis against the newly active coordinates.
+  selectRouteOption(index: number): void {
+    if (index < 0 || index >= this.routeOptions.length || index === this.selectedRouteIndex) return;
+    const option = this.routeOptions[index];
+
+    this._announcedKeys.clear();
+    this._alertedTimIds.clear();
+
+    runInAction(() => {
+      this.selectedRouteIndex = index;
+      this.applyRouteOption(option);
+      this.hasArrived = false;
+      this.approachingTimZones = [];
+      this.approachingTimZoneDistancesM = new Map();
+    });
+
+    this.analyzeTimIntersections();
+    this.analyzePreemptionZones();
   }
 
   startNavigation(): void {
@@ -477,7 +518,7 @@ export class RouteViewModel {
       const coords = `${from[0]},${from[1]};${to[0]},${to[1]}`;
       const url =
         `https://api.mapbox.com/directions/v5/mapbox/driving/${coords}` +
-        `?geometries=geojson&overview=full&steps=true` +
+        `?geometries=geojson&overview=full&steps=true&alternatives=true` +
         `&voice_instructions=true&banner_instructions=true` +
         `&access_token=${token}`;
 
@@ -485,46 +526,22 @@ export class RouteViewModel {
       if (!resp.ok) throw new Error(`Directions API ${resp.status}`);
       const data = await resp.json();
 
-      const route = data.routes?.[0];
-      if (!route) throw new Error('No route found');
+      const routes = data.routes ?? [];
+      if (routes.length === 0) throw new Error('No route found');
 
-      const coordinates: [number, number][] = route.geometry.coordinates;
-      const distanceMi = (route.distance / 1609.34).toFixed(1);
-      const durationMin = Math.round(route.duration / 60);
-
-      // Parse all steps from all legs
-      const steps: RouteStep[] = [];
-      for (const leg of route.legs ?? []) {
-        for (const step of leg.steps ?? []) {
-          steps.push({
-            distance: step.distance ?? 0,
-            duration: step.duration ?? 0,
-            name: step.name ?? '',
-            maneuverType: step.maneuver?.type ?? 'continue',
-            maneuverModifier: step.maneuver?.modifier,
-            instruction: step.maneuver?.instruction ?? step.name ?? '',
-            coordinate: step.maneuver?.location ?? [0, 0],
-          });
-        }
-      }
+      // Mapbox returns the recommended route first when alternatives=true.
+      const options: RouteOption[] = routes.map((route: any) => this.buildRouteOption(route));
 
       this._announcedKeys.clear();
       this._alertedTimIds.clear();
 
       runInAction(() => {
-        this.routeCoordinates = coordinates;
-        this.remainingRouteCoordinates = coordinates;
-        this.routeDistance = `${distanceMi} mi`;
-        this.routeDuration = `${durationMin} min`;
-        this.totalDurationS = route.duration;
-        this.steps = steps;
+        this.routeOptions = options;
+        this.selectedRouteIndex = 0;
+        this.applyRouteOption(options[0]);
         this.hasActiveRoute = true;
         this.isLoadingRoute = false;
         this.hasArrived = false;
-        this.currentStepIndex = 0;
-        this.distanceToNextManeuver = steps[0]?.distance ?? Infinity;
-        this.remainingDistanceM = route.distance;
-        this.remainingDurationS = route.duration;
         this.isOverviewMode = false;
         this.approachingTimZones = [];
         this.approachingTimZoneDistancesM = new Map();
@@ -538,6 +555,52 @@ export class RouteViewModel {
         this.isLoadingRoute = false;
       });
     }
+  }
+
+  // Parses one Directions API route object into a self-contained RouteOption.
+  private buildRouteOption(route: any): RouteOption {
+    const coordinates: [number, number][] = route.geometry.coordinates;
+    const distanceMi = (route.distance / 1609.34).toFixed(1);
+    const durationMin = Math.round(route.duration / 60);
+
+    const steps: RouteStep[] = [];
+    for (const leg of route.legs ?? []) {
+      for (const step of leg.steps ?? []) {
+        steps.push({
+          distance: step.distance ?? 0,
+          duration: step.duration ?? 0,
+          name: step.name ?? '',
+          maneuverType: step.maneuver?.type ?? 'continue',
+          maneuverModifier: step.maneuver?.modifier,
+          instruction: step.maneuver?.instruction ?? step.name ?? '',
+          coordinate: step.maneuver?.location ?? [0, 0],
+        });
+      }
+    }
+
+    return {
+      coordinates,
+      distanceMeters: route.distance,
+      durationSeconds: route.duration,
+      distanceLabel: `${distanceMi} mi`,
+      durationLabel: `${durationMin} min`,
+      steps,
+    };
+  }
+
+  // Copies a RouteOption's fields into the active-route observables — shared
+  // by fetchDirections (new route) and selectRouteOption (switching alternates).
+  private applyRouteOption(option: RouteOption): void {
+    this.routeCoordinates = option.coordinates;
+    this.remainingRouteCoordinates = option.coordinates;
+    this.routeDistance = option.distanceLabel;
+    this.routeDuration = option.durationLabel;
+    this.totalDurationS = option.durationSeconds;
+    this.steps = option.steps;
+    this.currentStepIndex = 0;
+    this.distanceToNextManeuver = option.steps[0]?.distance ?? Infinity;
+    this.remainingDistanceM = option.distanceMeters;
+    this.remainingDurationS = option.durationSeconds;
   }
 
   // ── Private: V2X analysis ─────────────────────────────────────────────────
@@ -577,7 +640,7 @@ export class RouteViewModel {
           if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
           if (ring.length < 4) continue;
           if (booleanIntersects(routeLine, polygon([ring]))) {
-            hits.push({ zoneId: zone.id, zoneName: zone.name });
+            hits.push({ zoneId: zone.id, zoneName: zone.name, polygon: zone.polygon });
           }
         } catch {
           // Skip malformed zone

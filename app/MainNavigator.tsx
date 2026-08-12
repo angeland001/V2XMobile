@@ -10,6 +10,7 @@ import { MainViewModel } from './src/Main/viewmodels/MainViewModel';
 import { RouteScreen } from './src/features/UI/screens/RouteScreen';
 import { AlertsScreen } from './src/features/UI/screens/AlertsScreen';
 import { SettingsScreen } from './src/features/UI/screens/SettingsScreen';
+import { useResponsiveLayout } from './src/features/UI/hooks/useResponsiveLayout';
 
 const ACTIVE_COLOR = '#FF8C00';
 const INACTIVE_COLOR = '#7A7A8A';
@@ -49,13 +50,14 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
   const unread = viewModel.timService.unreadAlertCount;
 
   // The tab bar (Route/Alerts/Settings + map circle) only gets in the way
-  // while turn-by-turn is active — hide it for the extra screen height, and
-  // bring it back the moment navigation ends.
+  // while a route is active — hidden for the full preview + turn-by-turn
+  // lifetime (Apple-Maps-style full-screen map takeover), and brought back
+  // the moment the route is cleared.
   const navigatorRef = useRef<ICurvedBottomBarRef | null>(null);
-  const isNavigating = viewModel.routeViewModel.isNavigating;
+  const hasActiveRoute = viewModel.routeViewModel.hasActiveRoute;
   useEffect(() => {
-    navigatorRef.current?.setVisible(!isNavigating);
-  }, [isNavigating]);
+    navigatorRef.current?.setVisible(!hasActiveRoute);
+  }, [hasActiveRoute]);
 
   // Same wide-car-display detection used across the nav HUD (see
   // NavigationBanner). There the bar defaults to the full window width,
@@ -64,7 +66,19 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
   // handle keeping it centered.
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const isWide = screenWidth > screenHeight * 1.3;
-  const navBarWidth = isWide ? Math.min(440, screenWidth - 32) : undefined;
+  // On an actual tablet the bar gets more room than the car-HU 440px cap
+  // (there's a lot more width to use, and it's still touched by hand rather
+  // than glanced at), plus larger touch targets throughout — the underlying
+  // library caps height at 91 and circleWidth at 61, both used here.
+  const { isTablet } = useResponsiveLayout();
+  const navBarWidth = isTablet
+    ? Math.min(640, screenWidth - 64)
+    : isWide
+      ? Math.min(440, screenWidth - 32)
+      : undefined;
+  const circleBtnSize = isTablet ? 76 : 60;
+  const circleIconSize = isTablet ? 34 : 28;
+  const tabIconSize = isTablet ? 30 : 24;
 
   return (
     <NavigationIndependentTree>
@@ -75,8 +89,8 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
           initialRouteName="map"
           bgColor={BAR_COLOR}
           width={navBarWidth}
-          circleWidth={60}
-          height={65}
+          circleWidth={isTablet ? 61 : 60}
+          height={isTablet ? 91 : 65}
           borderTopLeftRight
           borderColor="transparent"
           borderWidth={0}
@@ -84,13 +98,13 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
           style={{}}
           screenOptions={{ headerShown: false }}
           renderCircle={({ navigate }: { navigate: (tab: string) => void }) => (
-            <View style={styles.circleBtnWrapper}>
+            <View style={[styles.circleBtnWrapper, { transform: [{ translateY: -circleBtnSize / 2.4 }] }]}>
               <TouchableOpacity
-                style={styles.circleBtn}
+                style={[styles.circleBtn, { width: circleBtnSize, height: circleBtnSize, borderRadius: circleBtnSize / 2 }]}
                 onPress={() => navigate('map')}
                 activeOpacity={0.85}
               >
-                <Ionicons name="map" size={28} color="#ffffff" />
+                <Ionicons name="map" size={circleIconSize} color="#ffffff" />
               </TouchableOpacity>
             </View>
           )}
@@ -112,25 +126,25 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
 
             return (
               <TouchableOpacity
-                style={styles.tabItem}
+                style={[styles.tabItem, isTablet && styles.tabItemTablet]}
                 onPress={() => navigate(routeName)}
                 activeOpacity={0.7}
               >
                 <View style={styles.iconWrap}>
                   <Ionicons
                     name={(isActive ? config.active : config.inactive) as any}
-                    size={24}
+                    size={tabIconSize}
                     color={isActive ? ACTIVE_COLOR : INACTIVE_COLOR}
                   />
                   {showBadge && (
-                    <View style={styles.badge}>
-                      <Text style={styles.badgeText}>
+                    <View style={[styles.badge, isTablet && styles.badgeTablet]}>
+                      <Text style={[styles.badgeText, isTablet && styles.badgeTextTablet]}>
                         {unread > 9 ? '9+' : String(unread)}
                       </Text>
                     </View>
                   )}
                 </View>
-                <Text style={[styles.label, isActive && styles.labelActive]}>
+                <Text style={[styles.label, isTablet && styles.labelTablet, isActive && styles.labelActive]}>
                   {config.label}
                 </Text>
               </TouchableOpacity>
@@ -187,6 +201,10 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 3,
   },
+  tabItemTablet: {
+    paddingVertical: 14,
+    gap: 5,
+  },
   iconWrap: {
     position: 'relative',
   },
@@ -202,16 +220,27 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
   },
+  badgeTablet: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+  },
   badgeText: {
     color: '#fff',
     fontSize: 9,
     fontWeight: '700',
+  },
+  badgeTextTablet: {
+    fontSize: 11,
   },
   label: {
     fontSize: 10,
     color: INACTIVE_COLOR,
     fontWeight: '500',
     letterSpacing: 0.3,
+  },
+  labelTablet: {
+    fontSize: 13,
   },
   labelActive: {
     color: ACTIVE_COLOR,

@@ -4,10 +4,8 @@ import { observer } from 'mobx-react-lite';
 import { MainViewModel } from './src/Main/viewmodels/MainViewModel';
 import { MainNavigator } from './MainNavigator';
 import { TimToast } from './src/features/UI/components/TimToast';
-import { startCarBridge } from './src/features/CarApp/CarBridgeService';
 
 const mainViewModel = new MainViewModel();
-startCarBridge(mainViewModel.spatViewModel);
 
 export const AppNavigator: React.FC = observer(() => {
   useEffect(() => {

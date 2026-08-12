@@ -39,6 +39,7 @@ import { NavigationBanner } from "../../../Route/components/NavigationBanner";
 import { NavigationSummaryBar } from "../../../Route/components/NavigationSummaryBar";
 import { TAB_BAR_HEIGHT } from "../../../UI/theme";
 import { useStackedOffset } from "../../hooks/useStackedOffset";
+import { useResponsiveLayout } from "../../../UI/hooks/useResponsiveLayout";
 
 MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
@@ -417,6 +418,10 @@ const TOP_RIGHT_ORDER = ["legend"] as const;
 // ZoomControls' width never varies.
 const ZOOM_CONTROLS_RIGHT_MARGIN = 16;
 const ZOOM_CONTROLS_BUTTON_WIDTH = 44;
+// Matches ZoomControls' own tablet scale factor — kept in sync so
+// MapOverlayMenu (which docks off this measurement, not a real layout
+// measurement of ZoomControls) still lines up next to the bigger buttons.
+const ZOOM_CONTROLS_TABLET_SCALE = 1.3;
 const OVERLAY_MENU_GAP = 10;
 const OVERLAY_MENU_BOTTOM = 110;
 const BOTTOM_CENTER_ORDER = ["recenter", "toast"] as const;
@@ -532,6 +537,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const { width: screenWidth, height: screenHeight } = useWindowDimensions();
     // Same wide-car-display detection as NavigationBanner — see its comment.
     const isWide = screenWidth > screenHeight * 1.3;
+    const { isTablet } = useResponsiveLayout();
     const topRightStack = useStackedOffset(TOP_RIGHT_ORDER, 12);
     const bottomCenterStack = useStackedOffset(BOTTOM_CENTER_ORDER, 10);
     const navTopRightStack = useStackedOffset(NAV_TOP_RIGHT_ORDER, 10);
@@ -559,11 +565,25 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     // nav banner in that same state. Otherwise it keeps its original
     // top-left spot.
     const preemptionDockRight = isNavigating;
+    // On tablet (Galaxy Tab S10), the toggle+panel pair moves off the
+    // top-left corner entirely and instead sits as one block vertically
+    // centered on the left edge — there's enough screen height on a tablet
+    // that pinning the toggle to the top reads as oddly stranded rather
+    // than docked. leftStack.totalHeight() is the real (measured) combined
+    // height of both, so the centering stays correct as either one's
+    // content grows (longer intersection name, larger tablet fonts, etc.).
+    const leftStackTotalHeight = leftStack.totalHeight();
+    const leftStackCenterTop = Math.max(
+      insets.top + 16,
+      (screenHeight - leftStackTotalHeight) / 2,
+    );
     // Left-docked spot also needs insets.top — same status-bar collision as
     // topRightBase above, since this is the toggle's default top-left position.
     const preemptionTop = preemptionDockRight
       ? navTopRightStack.offsetFor('preemptionToggle', etaBannerTop)
-      : insets.top + 30;
+      : isTablet
+        ? leftStackCenterTop
+        : insets.top + 30;
     // On a wide car display, the toggle only leaves its left-docked spot
     // while navigating (preemptionDockRight above) — any other time on that
     // display it stays top-left, in the same column the traffic light panel
@@ -573,7 +593,10 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     // top-anchored toggle and bottom-anchored panel never meet. (On a phone
     // preemptionDockRight is now also true while navigating, but this line
     // only ever fires for the wide+non-navigating case since `isWide` gates it.)
-    const stackTrafficLightBelowToggle = isWide && !preemptionDockRight;
+    // Tablet joins this same stacked-left treatment (see leftStackCenterTop
+    // above) regardless of aspect ratio, since it's centered rather than
+    // reacting to a short car-HU screen.
+    const stackTrafficLightBelowToggle = (isWide || isTablet) && !preemptionDockRight;
     const trafficLightPanelTop = stackTrafficLightBelowToggle
       ? leftStack.offsetFor('trafficLightPanel', preemptionTop)
       : undefined;
@@ -1077,7 +1100,11 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
               onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
               onCycleLayer={cycleMapLayer}
               bottom={OVERLAY_MENU_BOTTOM}
-              right={ZOOM_CONTROLS_RIGHT_MARGIN + ZOOM_CONTROLS_BUTTON_WIDTH + OVERLAY_MENU_GAP}
+              right={
+                ZOOM_CONTROLS_RIGHT_MARGIN +
+                ZOOM_CONTROLS_BUTTON_WIDTH * (isTablet ? ZOOM_CONTROLS_TABLET_SCALE : 1) +
+                OVERLAY_MENU_GAP
+              }
             />
           </>
         )}
@@ -1248,6 +1275,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           durationLabel={effectiveDurationLabel}
           top={trafficLightPanelTop}
           left={stackTrafficLightBelowToggle ? TRAFFIC_LIGHT_PANEL_CAR_LEFT : undefined}
+          onLayout={leftStack.onLayout('trafficLightPanel')}
           // Suppress the "unavailable" alert whenever the controller-light
           // fallback below has something to show instead — a colored light
           // next to an "unavailable" label would be a contradiction.

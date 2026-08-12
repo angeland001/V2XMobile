@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, LayoutChangeEvent } from 'react-native';
 import type { SsmStatus } from '../models/PreemptionModels';
+import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 
 export type TrafficLightState = 'red' | 'yellow' | 'green' | null;
 
@@ -21,6 +22,7 @@ interface TrafficLightPanelProps {
   // Left inset; defaults to the panel's normal phone-layout position. Pass the
   // toggle's own left inset when stacking below it so both line up.
   left?: number;
+  onLayout?: (e: LayoutChangeEvent) => void;
 }
 
 const LIGHTS: {
@@ -58,6 +60,12 @@ const STATUS_CONFIG: Record<
   cancelled:  { label: 'SIGNAL LOST',   color: '#FF3B30', borderColor: '#FF3B30' },
 };
 
+// Housing scales up on tablet — the socket/light/bolt sizes below are all
+// derived from this one factor rather than a second hardcoded style tier,
+// since every dimension in the skeuomorphic housing needs to move together
+// to still read as one physical object.
+const TABLET_SCALE = 1.35;
+
 export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   activeLight = null,
   intersectionName,
@@ -68,7 +76,11 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   spatUnavailable = false,
   top,
   left = 16,
+  onLayout,
 }) => {
+  const { isTablet } = useResponsiveLayout();
+  const scale = isTablet ? TABLET_SCALE : 1;
+
   const progressAnim = useRef(new Animated.Value(heartbeatPulse)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
@@ -121,23 +133,29 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
   const statusConfig = ssmStatus ? STATUS_CONFIG[ssmStatus] : null;
   const housingBorderColor = statusConfig?.borderColor ?? '#333';
 
+  const lightSocketSize = 40 * scale;
+  const lightSize = 32 * scale;
+  const boltSize = 6 * scale;
+
   return (
     <View
       style={[
         styles.wrapper,
-        { left },
+        { width: 76 * scale, left },
         top !== undefined ? { top } : { bottom: 100 + navOffset },
       ]}
+      onLayout={onLayout}
     >
       {intersectionName ? (
-        <View style={styles.nameBadge}>
-          <Text style={styles.nameText} numberOfLines={2}>
+        <View style={[styles.nameBadge, isTablet && styles.nameBadgeTablet]}>
+          <Text style={[styles.nameText, isTablet && styles.nameTextTablet]} numberOfLines={2}>
             {intersectionName}
           </Text>
           {statusConfig && (
             <Animated.Text
               style={[
                 styles.statusLabel,
+                isTablet && styles.statusLabelTablet,
                 { color: statusConfig.color },
                 ssmStatus === 'requesting' && { opacity: pulseAnim },
               ]}
@@ -153,19 +171,24 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
           pointerEvents="none"
           style={[styles.grantedFlashRing, { opacity: grantedFlashAnim }]}
         />
-        <View style={[styles.housing, { borderColor: housingBorderColor }]}>
-          <View style={styles.bolt} />
+        <View style={[styles.housing, isTablet && styles.housingTablet, { borderColor: housingBorderColor }]}>
+          <View style={[styles.bolt, { width: boltSize, height: boltSize, borderRadius: boltSize / 2 }]} />
 
           {LIGHTS.map(({ key, activeColor, glowColor, dimColor }) => {
             const isActive = activeLight === key;
             return (
               <View
                 key={key}
-                style={[styles.lightSocket, isActive && { backgroundColor: glowColor }]}
+                style={[
+                  styles.lightSocket,
+                  { width: lightSocketSize, height: lightSocketSize, borderRadius: lightSocketSize / 2 },
+                  isActive && { backgroundColor: glowColor },
+                ]}
               >
                 <View
                   style={[
                     styles.light,
+                    { width: lightSize, height: lightSize, borderRadius: lightSize / 2 },
                     { backgroundColor: isActive ? activeColor : dimColor },
                     isActive && {
                       shadowColor: activeColor,
@@ -184,10 +207,10 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
             );
           })}
 
-          <View style={styles.bolt} />
+          <View style={[styles.bolt, { width: boltSize, height: boltSize, borderRadius: boltSize / 2 }]} />
 
           {ssmStatus !== null && (
-            <View style={styles.progressTrack}>
+            <View style={[styles.progressTrack, isTablet && styles.progressTrackTablet]}>
               <Animated.View
                 style={[
                   styles.progressFill,
@@ -202,11 +225,11 @@ export const TrafficLightPanel: React.FC<TrafficLightPanelProps> = ({
             </View>
           )}
           {spatUnavailable ? (
-            <Text style={styles.unavailableText} numberOfLines={2}>
+            <Text style={[styles.unavailableText, isTablet && styles.unavailableTextTablet]} numberOfLines={2}>
               SPaT unavailable
             </Text>
           ) : (
-            <Text style={styles.durationText}>{durationLabel}</Text>
+            <Text style={[styles.durationText, isTablet && styles.durationTextTablet]}>{durationLabel}</Text>
           )}
         </View>
       </View>
@@ -218,7 +241,6 @@ const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
     alignItems: 'center',
-    width: 76,
     zIndex: 1000,
   },
 
@@ -231,6 +253,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     width: '100%',
   },
+  nameBadgeTablet: {
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginBottom: 10,
+  },
   nameText: {
     color: '#ffffff',
     fontSize: 9,
@@ -238,11 +266,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 13,
   },
+  nameTextTablet: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
   statusLabel: {
     fontSize: 7,
     fontWeight: '700',
     letterSpacing: 0.8,
     marginTop: 3,
+  },
+  statusLabelTablet: {
+    fontSize: 9,
   },
 
   housingContainer: {
@@ -274,27 +309,22 @@ const styles = StyleSheet.create({
     elevation: 8,
     width: '100%',
   },
+  housingTablet: {
+    borderRadius: 16,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+  },
   bolt: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
     backgroundColor: '#444',
     marginVertical: 2,
   },
   lightSocket: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
     marginVertical: 5,
     overflow: 'hidden',
   },
-  light: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-  },
+  light: {},
 
   progressTrack: {
     width: '100%',
@@ -303,6 +333,10 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     marginTop: 10,
     overflow: 'hidden',
+  },
+  progressTrackTablet: {
+    height: 7,
+    marginTop: 13,
   },
   progressFill: {
     height: '100%',
@@ -317,6 +351,9 @@ const styles = StyleSheet.create({
     marginBottom: 2,
     letterSpacing: 0.3,
   },
+  durationTextTablet: {
+    fontSize: 11,
+  },
   unavailableText: {
     color: '#f59e0b',
     fontSize: 8,
@@ -325,6 +362,9 @@ const styles = StyleSheet.create({
     marginTop: 5,
     marginBottom: 2,
     letterSpacing: 0.2,
+  },
+  unavailableTextTablet: {
+    fontSize: 11,
   },
 });
 

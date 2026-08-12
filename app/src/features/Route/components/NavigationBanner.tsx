@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
 import { RouteViewModel } from '../viewmodels/RouteViewModel';
+import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 
 interface Props {
   routeViewModel: RouteViewModel;
@@ -15,6 +16,10 @@ interface Props {
 // reads as a compact card floating over the map instead of a strip that
 // eats the whole top of a screen many times wider than it needs.
 const PHONE_CARD_WIDTH = 380;
+// On tablet the map region is still roomy even after the nav rail + status
+// dock take their share, so the banner gets a bit more room than the
+// car-HU-compact width above rather than staying phone-sized.
+const TABLET_CARD_WIDTH = 460;
 
 function getManeuverIcon(type: string, modifier?: string): keyof typeof Ionicons.glyphMap {
   if (type === 'arrive') return 'flag';
@@ -46,6 +51,7 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
   // padding, shrinks down, cuts the lowest-priority line, and shrinks to a
   // phone-width floating card instead of stretching across the whole display.
   const isWide = width > height * 1.3;
+  const { isTablet } = useResponsiveLayout();
 
   if (!routeViewModel.isNavigating) return null;
 
@@ -53,10 +59,10 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
     ? {
         top: insets.top + 10,
         left: 16,
-        width: PHONE_CARD_WIDTH,
-        paddingTop: 6,
-        paddingBottom: 6,
-        gap: 8,
+        width: isTablet ? TABLET_CARD_WIDTH : PHONE_CARD_WIDTH,
+        paddingTop: isTablet ? 10 : 6,
+        paddingBottom: isTablet ? 10 : 6,
+        gap: isTablet ? 12 : 8,
         borderRadius: 14,
         borderWidth: 1,
         borderColor: 'rgba(0,0,0,0.06)',
@@ -73,13 +79,13 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(0,0,0,0.06)',
       };
-  const iconCircleSize = isWide ? 36 : 58;
+  const iconCircleSize = isTablet ? 48 : isWide ? 36 : 58;
   const iconCircleDynamicStyle = {
     width: iconCircleSize,
     height: iconCircleSize,
     borderRadius: iconCircleSize / 2,
   };
-  const iconSize = isWide ? 18 : 28;
+  const iconSize = isTablet ? 22 : isWide ? 18 : 28;
 
   // Arrived state
   if (routeViewModel.hasArrived) {
@@ -92,8 +98,8 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
           <Ionicons name="flag" size={iconSize} color="#fff" />
         </View>
         <View style={styles.textColumn}>
-          <Text style={[styles.distance, isWide && styles.distanceWide, { color: '#22C55E' }]}>Arrived!</Text>
-          <Text style={[styles.street, isWide && styles.streetWide]} numberOfLines={1}>
+          <Text style={[styles.distance, isWide && styles.distanceWide, isTablet && styles.distanceTablet, { color: '#22C55E' }]}>Arrived!</Text>
+          <Text style={[styles.street, isWide && styles.streetWide, isTablet && styles.streetTablet]} numberOfLines={1}>
             {routeViewModel.toLabel}
           </Text>
         </View>
@@ -112,8 +118,8 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
           <ActivityIndicator color="#fff" size="small" />
         </View>
         <View style={styles.textColumn}>
-          <Text style={[styles.distance, isWide && styles.distanceWide, { color: '#6B7280' }]}>Recalculating…</Text>
-          <Text style={[styles.street, isWide && styles.streetWide]}>Finding best route</Text>
+          <Text style={[styles.distance, isWide && styles.distanceWide, isTablet && styles.distanceTablet, { color: '#6B7280' }]}>Recalculating…</Text>
+          <Text style={[styles.street, isWide && styles.streetWide, isTablet && styles.streetTablet]}>Finding best route</Text>
         </View>
       </View>
     );
@@ -153,12 +159,12 @@ export const NavigationBanner: React.FC<Props> = observer(({ routeViewModel, onB
         ) : null}
         {/* Upcoming turn, dominant — the actionable instruction. */}
         <View style={styles.primaryRow}>
-          {dist !== '' && <Text style={[styles.distance, isWide && styles.distanceWide]}>{dist}</Text>}
-          <Text style={[styles.street, isWide && styles.streetWide]} numberOfLines={1}>
+          {dist !== '' && <Text style={[styles.distance, isWide && styles.distanceWide, isTablet && styles.distanceTablet]}>{dist}</Text>}
+          <Text style={[styles.street, isWide && styles.streetWide, isTablet && styles.streetTablet]} numberOfLines={1}>
             {upcomingRoadName}
           </Text>
         </View>
-        <Text style={[styles.instruction, isWide && styles.instructionWide]} numberOfLines={1}>
+        <Text style={[styles.instruction, isWide && styles.instructionWide, isTablet && styles.instructionTablet]} numberOfLines={1}>
           {upcoming.instruction}
         </Text>
         {/* "Then: ..." preview is the lowest-priority line — cut on wide
@@ -224,6 +230,9 @@ const styles = StyleSheet.create({
   distanceWide: {
     fontSize: 18,
   },
+  distanceTablet: {
+    fontSize: 22,
+  },
   street: {
     fontSize: 16,
     fontWeight: '600',
@@ -233,6 +242,9 @@ const styles = StyleSheet.create({
   streetWide: {
     fontSize: 14,
   },
+  streetTablet: {
+    fontSize: 17,
+  },
   instruction: {
     fontSize: 13,
     color: 'rgba(26,26,46,0.6)',
@@ -240,6 +252,9 @@ const styles = StyleSheet.create({
   },
   instructionWide: {
     fontSize: 11,
+  },
+  instructionTablet: {
+    fontSize: 14,
   },
   nextStep: {
     fontSize: 11,
