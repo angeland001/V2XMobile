@@ -10,7 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
-import { COLORS } from '../theme';
+import { ROUTE_COLORS, ROUTE_FONTS } from '../appTheme';
 import { API_CONFIG } from '../../../core/api/config';
 import { SettingsViewModel, PreemptionZoneDisplayMode } from '../viewmodels/SettingsViewModel';
 
@@ -24,8 +24,8 @@ interface ToggleRowProps {
 
 const ToggleRow: React.FC<ToggleRowProps> = ({ label, sublabel, value, onToggle, icon }) => (
   <View style={styles.toggleRow}>
-    <View style={[styles.rowIcon, { backgroundColor: value ? COLORS.orangeBg : COLORS.surface2 }]}>
-      <Ionicons name={icon} size={17} color={value ? COLORS.orange : COLORS.textSecondary} />
+    <View style={[styles.rowIcon, { backgroundColor: value ? ROUTE_COLORS.amberDim : ROUTE_COLORS.panelRaised }]}>
+      <Ionicons name={icon} size={17} color={value ? ROUTE_COLORS.amberText : ROUTE_COLORS.steel} />
     </View>
     <View style={styles.toggleText}>
       <Text style={styles.toggleLabel}>{label}</Text>
@@ -34,9 +34,9 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ label, sublabel, value, onToggle,
     <Switch
       value={value}
       onValueChange={onToggle}
-      trackColor={{ false: COLORS.surface3, true: COLORS.orangeBgStrong }}
-      thumbColor={value ? COLORS.orange : COLORS.textDim}
-      ios_backgroundColor={COLORS.surface3}
+      trackColor={{ false: ROUTE_COLORS.steelDim, true: ROUTE_COLORS.amberBorder }}
+      thumbColor={value ? ROUTE_COLORS.amber : ROUTE_COLORS.panel}
+      ios_backgroundColor={ROUTE_COLORS.steelDim}
     />
   </View>
 );
@@ -70,8 +70,8 @@ function SegmentedRow<T extends string | number>({
   return (
     <View style={styles.segmentedRow}>
       <View style={styles.segmentedTop}>
-        <View style={[styles.rowIcon, { backgroundColor: dimmed ? COLORS.surface2 : COLORS.orangeBg }]}>
-          <Ionicons name={icon} size={17} color={dimmed ? COLORS.textSecondary : COLORS.orange} />
+        <View style={[styles.rowIcon, { backgroundColor: dimmed ? ROUTE_COLORS.panelRaised : ROUTE_COLORS.amberDim }]}>
+          <Ionicons name={icon} size={17} color={dimmed ? ROUTE_COLORS.steel : ROUTE_COLORS.amberText} />
         </View>
         <View style={styles.toggleText}>
           <Text style={styles.toggleLabel}>{label}</Text>
@@ -106,8 +106,8 @@ interface InfoRowProps {
 
 const InfoRow: React.FC<InfoRowProps> = ({ label, value, icon }) => (
   <View style={styles.infoRow}>
-    <View style={[styles.rowIcon, { backgroundColor: COLORS.surface2 }]}>
-      <Ionicons name={icon} size={17} color={COLORS.textSecondary} />
+    <View style={[styles.rowIcon, { backgroundColor: ROUTE_COLORS.panelRaised }]}>
+      <Ionicons name={icon} size={17} color={ROUTE_COLORS.steel} />
     </View>
     <Text style={styles.infoLabel}>{label}</Text>
     <Text style={styles.infoValue} numberOfLines={1}>{value}</Text>
@@ -130,7 +130,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerAccent} />
         <View>
-          <Text style={styles.headerTitle}>Settings</Text>
+          <Text style={styles.headerTitle}>SETTINGS</Text>
           <Text style={styles.headerSub}>App configuration</Text>
         </View>
       </View>
@@ -242,63 +242,57 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.bg,
+    backgroundColor: ROUTE_COLORS.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 20,
-    paddingTop: 20,
     paddingBottom: 16,
-    backgroundColor: COLORS.surface,
+    backgroundColor: ROUTE_COLORS.panel,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: ROUTE_COLORS.amber,
   },
   headerAccent: {
-    width: 4,
-    height: 36,
-    borderRadius: 2,
-    backgroundColor: COLORS.orange,
+    width: 3,
+    height: 32,
+    backgroundColor: ROUTE_COLORS.amber,
   },
   headerTitle: {
+    fontFamily: ROUTE_FONTS.displayBlack,
     fontSize: 22,
-    fontWeight: '700',
-    color: COLORS.textPrimary,
-    letterSpacing: -0.3,
+    color: ROUTE_COLORS.ink,
+    letterSpacing: 1,
   },
   headerSub: {
+    fontFamily: ROUTE_FONTS.body,
     fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 1,
+    color: ROUTE_COLORS.steel,
+    marginTop: 2,
   },
   scrollContent: {
     padding: 16,
     paddingBottom: 40,
   },
   sectionLabel: {
+    fontFamily: ROUTE_FONTS.displaySemiBold,
     fontSize: 10,
-    color: COLORS.orange,
-    fontWeight: '700',
+    color: ROUTE_COLORS.steel,
     letterSpacing: 1.5,
     marginBottom: 8,
     marginTop: 16,
   },
   card: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    backgroundColor: ROUTE_COLORS.panel,
+    borderRadius: 4,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: ROUTE_COLORS.hairline,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
   },
   cardDivider: {
     height: 1,
-    backgroundColor: COLORS.border,
+    backgroundColor: ROUTE_COLORS.hairline,
     marginLeft: 56,
   },
   rowIcon: {
@@ -321,13 +315,14 @@ const styles = StyleSheet.create({
     gap: 1,
   },
   toggleLabel: {
+    fontFamily: ROUTE_FONTS.bodyMedium,
     fontSize: 14,
-    color: COLORS.textPrimary,
-    fontWeight: '500',
+    color: ROUTE_COLORS.ink,
   },
   toggleSub: {
+    fontFamily: ROUTE_FONTS.body,
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: ROUTE_COLORS.steel,
   },
   segmentedRow: {
     paddingHorizontal: 14,
@@ -341,27 +336,27 @@ const styles = StyleSheet.create({
   },
   segmentedControl: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surface2,
-    borderRadius: 8,
+    backgroundColor: ROUTE_COLORS.panelRaised,
+    borderRadius: 4,
     padding: 3,
     gap: 3,
   },
   segmentButton: {
     flex: 1,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 3,
     alignItems: 'center',
   },
   segmentButtonActive: {
-    backgroundColor: COLORS.orange,
+    backgroundColor: ROUTE_COLORS.amber,
   },
   segmentButtonText: {
+    fontFamily: ROUTE_FONTS.bodySemiBold,
     fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: ROUTE_COLORS.steel,
   },
   segmentButtonTextActive: {
-    color: COLORS.white,
+    color: ROUTE_COLORS.ink,
   },
   infoRow: {
     flexDirection: 'row',
@@ -372,12 +367,14 @@ const styles = StyleSheet.create({
   },
   infoLabel: {
     flex: 1,
+    fontFamily: ROUTE_FONTS.body,
     fontSize: 14,
-    color: COLORS.textPrimary,
+    color: ROUTE_COLORS.ink,
   },
   infoValue: {
+    fontFamily: ROUTE_FONTS.mono,
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: ROUTE_COLORS.steel,
     maxWidth: '50%',
     textAlign: 'right',
   },
@@ -389,21 +386,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   footerBadge: {
-    backgroundColor: COLORS.orange,
-    borderRadius: 6,
+    backgroundColor: ROUTE_COLORS.amber,
+    borderRadius: 3,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   footerBadgeText: {
+    fontFamily: ROUTE_FONTS.displayExtraBold,
     fontSize: 11,
-    fontWeight: '800',
-    color: COLORS.white,
+    color: ROUTE_COLORS.ink,
     letterSpacing: 1,
   },
   footerText: {
     flex: 1,
+    fontFamily: ROUTE_FONTS.body,
     fontSize: 11,
-    color: COLORS.textDim,
+    color: ROUTE_COLORS.steel,
     lineHeight: 16,
   },
 });

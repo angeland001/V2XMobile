@@ -5,36 +5,10 @@ import { observer } from 'mobx-react-lite';
 import { Ionicons } from '@expo/vector-icons';
 import MapboxGL from '@rnmapbox/maps';
 import { TimService, TimAlertLogItem } from '../../TIM/services/TimService';
-import { COLORS } from '../theme';
+import { ROUTE_COLORS, ROUTE_FONTS, TIM_CATEGORY_STYLE } from '../appTheme';
+import { formatTimType, formatDate } from '../utils/timFormatting';
+import { SeverityDots } from '../components/SeverityDots';
 import { closeRing, normalizeToLngLat, type LngLat } from '../../../core/maps/coordinates';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-const CATEGORY_CONFIG = {
-  safety:        { color: '#EF4444', bg: 'rgba(239,68,68,0.08)',  icon: 'warning' as const,             label: 'SAFETY'     },
-  regulatory:    { color: '#F59E0B', bg: 'rgba(245,158,11,0.08)', icon: 'ban' as const,                 label: 'REGULATORY' },
-  informational: { color: '#3B82F6', bg: 'rgba(59,130,246,0.08)', icon: 'information-circle' as const,  label: 'INFO'       },
-};
-
-function formatTimType(raw: string): string {
-  return raw.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-}
-
-function formatDate(iso: string | null): string | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const hasTime = d.getHours() !== 0 || d.getMinutes() !== 0 || d.getSeconds() !== 0;
-    if (!hasTime) return datePart;
-    const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    return `${datePart} at ${timePart}`;
-  } catch {
-    return null;
-  }
-}
 
 function formatTimestamp(ts: number): string {
   const d = new Date(ts);
@@ -42,27 +16,6 @@ function formatTimestamp(ts: number): string {
   const mm = String(d.getMinutes()).padStart(2, '0');
   const ss = String(d.getSeconds()).padStart(2, '0');
   return `${hh}:${mm}:${ss}`;
-}
-
-function SeverityDots({ value }: { value: number }): React.ReactElement {
-  const total = 5;
-  const filled = Math.min(value, total);
-  const color = value >= 4 ? '#EF4444' : value >= 3 ? '#F59E0B' : '#22C55E';
-  return (
-    <View style={{ flexDirection: 'row', gap: 4, alignItems: 'center' }}>
-      <Text style={{ fontSize: 10, color: COLORS.textDim, fontWeight: '600', marginRight: 2 }}>Severity Risk</Text>
-      {Array.from({ length: total }).map((_, i) => (
-        <View
-          key={i}
-          style={{
-            width: 6, height: 6, borderRadius: 3,
-            backgroundColor: i < filled ? color : 'rgba(0,0,0,0.1)',
-          }}
-        />
-      ))}
-      <Text style={{ fontSize: 10, color, fontWeight: '700', marginLeft: 2 }}>{value}/5</Text>
-    </View>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +85,7 @@ const AlertMap: React.FC<AlertMapProps> = ({ log }) => {
         )}
 
         {unique.map(item => {
-          const cfg = CATEGORY_CONFIG[item.category];
+          const cfg = TIM_CATEGORY_STYLE[item.category];
           const rawOuter = item.geometry.coordinates[0] as [number, number][];
           const outerCoords = rawOuter.map(normalizeToLngLat);
           if (outerCoords.length < 3) return null;
@@ -148,7 +101,7 @@ const AlertMap: React.FC<AlertMapProps> = ({ log }) => {
             <MapboxGL.ShapeSource key={`alert-zone-${item.timId}`} id={`alert-zone-${item.timId}`} shape={shape}>
               <MapboxGL.FillLayer
                 id={`alert-fill-${item.timId}`}
-                style={{ fillColor: cfg.bg }}
+                style={{ fillColor: cfg.dimColor }}
               />
               <MapboxGL.LineLayer
                 id={`alert-line-${item.timId}`}
@@ -159,7 +112,7 @@ const AlertMap: React.FC<AlertMapProps> = ({ log }) => {
         })}
       </MapboxGL.MapView>
       <View style={styles.mapLabel}>
-        <Ionicons name="map-outline" size={11} color={COLORS.textDim} />
+        <Ionicons name="map-outline" size={11} color={ROUTE_COLORS.steel} />
         <Text style={styles.mapLabelText}>TIM zones triggered this session</Text>
       </View>
     </View>
@@ -171,7 +124,7 @@ const AlertMap: React.FC<AlertMapProps> = ({ log }) => {
 // ---------------------------------------------------------------------------
 
 const AlertCard: React.FC<{ item: TimAlertLogItem }> = ({ item }) => {
-  const cfg = CATEGORY_CONFIG[item.category];
+  const cfg = TIM_CATEGORY_STYLE[item.category];
   const validFrom = formatDate(item.validFrom);
   const validUntil = formatDate(item.validUntil);
 
@@ -180,11 +133,11 @@ const AlertCard: React.FC<{ item: TimAlertLogItem }> = ({ item }) => {
       {/* Header */}
       <View style={styles.cardHeader}>
         <View style={styles.cardHeaderLeft}>
-          <View style={[styles.iconWrap, { backgroundColor: cfg.bg }]}>
-            <Ionicons name={cfg.icon} size={16} color={cfg.color} />
-          </View>
-          <View style={[styles.categoryPill, { borderColor: cfg.color }]}>
-            <Text style={[styles.categoryLabel, { color: cfg.color }]}>{cfg.label}</Text>
+          <View style={styles.categoryPill}>
+            <Ionicons name={cfg.icon} size={11} color={cfg.color} />
+            <Text style={[styles.categoryLabel, { color: cfg.color }]}>
+              {item.category.toUpperCase()}
+            </Text>
           </View>
         </View>
         <Text style={styles.timestamp}>{formatTimestamp(item.timestamp)}</Text>
@@ -212,7 +165,7 @@ const AlertCard: React.FC<{ item: TimAlertLogItem }> = ({ item }) => {
       {/* Validity window */}
       {(validFrom || validUntil) && (
         <View style={styles.metaRow}>
-          <Ionicons name="time-outline" size={11} color={COLORS.textDim} />
+          <Ionicons name="time-outline" size={11} color={ROUTE_COLORS.steel} />
           <Text style={styles.metaValue}>
             {validFrom && validUntil
               ? `${validFrom} – ${validUntil}`
@@ -252,7 +205,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = observer(({ timService 
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <View style={styles.headerAccent} />
         <View>
-          <Text style={styles.headerTitle}>Alert Log</Text>
+          <Text style={styles.headerTitle}>ALERT LOG</Text>
           <Text style={styles.headerSub}>
             {log.length === 0
               ? 'No alerts this session'
@@ -264,9 +217,9 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = observer(({ timService 
       {log.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconWrap}>
-            <Ionicons name="shield-checkmark-outline" size={40} color={COLORS.orange} />
+            <Ionicons name="shield-checkmark-outline" size={40} color={ROUTE_COLORS.amberText} />
           </View>
-          <Text style={styles.emptyTitle}>All Clear</Text>
+          <Text style={styles.emptyTitle}>ALL CLEAR</Text>
           <Text style={styles.emptySub}>
             No TIM alerts have fired this session.{'\n'}
             Alerts appear here when you approach active zones.
@@ -281,10 +234,10 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = observer(({ timService 
           <AlertMap log={log} />
 
           <View style={styles.legendRow}>
-            {Object.values(CATEGORY_CONFIG).map(cfg => (
-              <View key={cfg.label} style={styles.legendItem}>
-                <View style={[styles.legendDot, { backgroundColor: cfg.color }]} />
-                <Text style={styles.legendText}>{cfg.label}</Text>
+            {(['safety', 'regulatory', 'informational'] as const).map(category => (
+              <View key={category} style={styles.legendItem}>
+                <View style={[styles.legendDot, { backgroundColor: TIM_CATEGORY_STYLE[category].color }]} />
+                <Text style={styles.legendText}>{category.toUpperCase()}</Text>
               </View>
             ))}
           </View>
@@ -309,21 +262,30 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = observer(({ timService 
 // ---------------------------------------------------------------------------
 
 const styles = StyleSheet.create({
-  container:       { flex: 1, backgroundColor: COLORS.bg },
-  header:          { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  headerAccent:    { width: 4, height: 36, borderRadius: 2, backgroundColor: COLORS.orange },
-  headerTitle:     { fontSize: 22, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.3 },
-  headerSub:       { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
+  container:       { flex: 1, backgroundColor: ROUTE_COLORS.bg },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    backgroundColor: ROUTE_COLORS.panel,
+    borderBottomWidth: 1,
+    borderBottomColor: ROUTE_COLORS.amber,
+  },
+  headerAccent:    { width: 3, height: 32, backgroundColor: ROUTE_COLORS.amber },
+  headerTitle:     { fontFamily: ROUTE_FONTS.displayBlack, fontSize: 22, color: ROUTE_COLORS.ink, letterSpacing: 1 },
+  headerSub:       { fontFamily: ROUTE_FONTS.body, fontSize: 12, color: ROUTE_COLORS.steel, marginTop: 2 },
   scroll:          { flex: 1 },
   scrollContent:   { paddingBottom: 32 },
   mapContainer: {
     marginHorizontal: 16,
     marginTop: 14,
     marginBottom: 4,
-    borderRadius: 12,
+    borderRadius: 4,
     overflow: 'hidden',
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: ROUTE_COLORS.hairline,
   },
   map:             { height: 210 },
   mapLabel: {
@@ -332,48 +294,42 @@ const styles = StyleSheet.create({
     gap: 5,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    backgroundColor: COLORS.surface,
+    backgroundColor: ROUTE_COLORS.panel,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: ROUTE_COLORS.hairline,
   },
-  mapLabelText:    { fontSize: 11, color: COLORS.textDim },
+  mapLabelText:    { fontFamily: ROUTE_FONTS.mono, fontSize: 11, color: ROUTE_COLORS.steel },
   legendRow:       { flexDirection: 'row', gap: 16, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 },
   legendItem:      { flexDirection: 'row', alignItems: 'center', gap: 5 },
   legendDot:       { width: 6, height: 6, borderRadius: 3 },
-  legendText:      { fontSize: 10, color: COLORS.textSecondary, fontWeight: '600', letterSpacing: 0.5 },
+  legendText:      { fontFamily: ROUTE_FONTS.monoSemiBold, fontSize: 10, color: ROUTE_COLORS.steel, letterSpacing: 0.5 },
   card: {
     marginHorizontal: 16,
     marginBottom: 10,
-    backgroundColor: COLORS.surface,
-    borderRadius: 10,
+    backgroundColor: ROUTE_COLORS.panelRaised,
+    borderRadius: 2,
     borderLeftWidth: 3,
     padding: 12,
     gap: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
   },
   cardHeader:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardHeaderLeft:  { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  iconWrap:        { width: 28, height: 28, borderRadius: 7, alignItems: 'center', justifyContent: 'center' },
-  categoryPill:    { borderWidth: 1, borderRadius: 4, paddingHorizontal: 6, paddingVertical: 2 },
-  categoryLabel:   { fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
-  timestamp:       { fontSize: 10, color: COLORS.textDim, fontFamily: 'monospace' },
-  timType:         { fontSize: 14, fontWeight: '700', color: COLORS.textPrimary },
+  categoryPill:    { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  categoryLabel:   { fontFamily: ROUTE_FONTS.monoSemiBold, fontSize: 9, letterSpacing: 0.8 },
+  timestamp:       { fontFamily: ROUTE_FONTS.mono, fontSize: 10, color: ROUTE_COLORS.steel },
+  timType:         { fontFamily: ROUTE_FONTS.bodySemiBold, fontSize: 14, color: ROUTE_COLORS.ink },
   severityRow:     { flexDirection: 'row' },
-  description:     { fontSize: 13, color: COLORS.textSecondary, lineHeight: 18 },
+  description:     { fontFamily: ROUTE_FONTS.body, fontSize: 13, color: ROUTE_COLORS.steel, lineHeight: 18 },
   metaRow:         { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  metaKey:         { fontSize: 10, fontWeight: '700', color: COLORS.textDim, letterSpacing: 0.5 },
-  metaValue:       { fontSize: 11, color: COLORS.textSecondary },
+  metaKey:         { fontFamily: ROUTE_FONTS.monoSemiBold, fontSize: 10, color: ROUTE_COLORS.steel, letterSpacing: 0.5 },
+  metaValue:       { fontFamily: ROUTE_FONTS.mono, fontSize: 11, color: ROUTE_COLORS.steel },
   sessionMarker:   { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 20, gap: 10 },
-  sessionLine:     { flex: 1, height: 1, backgroundColor: COLORS.border },
-  sessionLabel:    { fontSize: 9, color: COLORS.textDim, letterSpacing: 1.5, fontWeight: '600' },
+  sessionLine:     { flex: 1, height: 1, backgroundColor: ROUTE_COLORS.hairline },
+  sessionLabel:    { fontFamily: ROUTE_FONTS.mono, fontSize: 9, color: ROUTE_COLORS.steel, letterSpacing: 1.5 },
   emptyState:      { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40, gap: 12 },
-  emptyIconWrap:   { width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.orangeBg, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
-  emptyTitle:      { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary },
-  emptySub:        { fontSize: 13, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 20 },
+  emptyIconWrap:   { width: 72, height: 72, borderRadius: 36, backgroundColor: ROUTE_COLORS.amberDim, alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  emptyTitle:      { fontFamily: ROUTE_FONTS.displayBlack, fontSize: 20, color: ROUTE_COLORS.ink, letterSpacing: 1 },
+  emptySub:        { fontFamily: ROUTE_FONTS.body, fontSize: 13, color: ROUTE_COLORS.steel, textAlign: 'center', lineHeight: 20 },
 });
 
 export default AlertsScreen;

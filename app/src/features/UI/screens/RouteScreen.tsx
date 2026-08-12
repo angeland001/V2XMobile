@@ -14,12 +14,16 @@ import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
-import { COLORS } from '../theme';
-import { RouteViewModel, GeocodingSuggestion } from '../../Route/viewmodels/RouteViewModel';
+import { ROUTE_COLORS, ROUTE_FONTS } from '../appTheme';
+import { TransmissionPulse } from '../../Route/components/TransmissionPulse';
+import { LiveBroadcastBadge } from '../../Route/components/LiveBroadcastBadge';
+import { RouteViewModel, GeocodingSuggestion, RecentRoute } from '../../Route/viewmodels/RouteViewModel';
 
 interface RouteScreenProps {
   routeViewModel: RouteViewModel;
 }
+
+const CONNECTOR_HEIGHT = 22;
 
 export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewModel }) => {
   const geocodeDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -34,6 +38,15 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
     if (routeViewModel.hasActiveRoute) {
       navigation.navigate('map');
     }
+  };
+
+  // Recent-route rows skip the "review then tap Get Route" step a fresh
+  // geocoding suggestion requires — the destination was already routed to
+  // once before, so selecting it fetches and hands off to the map tab
+  // immediately, same end state as handleGetRoute.
+  const handleSelectRecent = async (r: RecentRoute) => {
+    routeViewModel.selectRecentRoute(r);
+    await handleGetRoute();
   };
 
   const handleToChange = (text: string) => {
@@ -57,11 +70,14 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
             bar is translucent (see AppNavigator), so nothing else accounts
             for it here. */}
         <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
-          <View style={styles.headerAccent} />
-          <View>
-            <Text style={styles.headerTitle}>Route</Text>
-            <Text style={styles.headerSub}>V2X-aware navigation</Text>
+          <View style={styles.headerLeft}>
+            <View style={styles.headerAccent} />
+            <View>
+              <Text style={styles.headerTitle}>ROUTE</Text>
+              <Text style={styles.headerSub}>V2X-aware navigation</Text>
+            </View>
           </View>
+          <LiveBroadcastBadge />
         </View>
 
         <ScrollView
@@ -69,28 +85,44 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Destination input */}
+          {/* Origin + destination input */}
           <View style={styles.searchCard}>
+            <View style={styles.originRow}>
+              <View style={[styles.dotRing, styles.originDotRing]}>
+                <View style={[styles.dot, { backgroundColor: ROUTE_COLORS.signal }]} />
+              </View>
+              <Text style={styles.originText}>CURRENT LOCATION</Text>
+            </View>
+
+            <View style={styles.connectorRow}>
+              <View style={styles.connectorTrack}>
+                <TransmissionPulse height={CONNECTOR_HEIGHT} color={ROUTE_COLORS.amber} />
+              </View>
+            </View>
+
             <View style={styles.inputRow}>
-              <View style={[styles.dotRing, { borderColor: COLORS.red }]}>
-                <View style={[styles.dot, { backgroundColor: COLORS.red }]} />
+              <View style={[styles.dotRing, styles.destDotRing]}>
+                <View style={[styles.dot, { backgroundColor: ROUTE_COLORS.amber }]} />
               </View>
               <TextInput
                 style={styles.input}
                 placeholder="Where to?"
-                placeholderTextColor={COLORS.textDim}
+                placeholderTextColor={ROUTE_COLORS.steelDim}
                 value={routeViewModel.toText}
                 onChangeText={handleToChange}
                 onFocus={() => routeViewModel.setShowSuggestions(routeViewModel.toSuggestions.length > 0)}
-                selectionColor={COLORS.orange}
+                selectionColor={ROUTE_COLORS.amber}
+                accessibilityLabel="Destination address"
               />
               {routeViewModel.toText.length > 0 && (
                 <TouchableOpacity
                   onPress={() => { routeViewModel.setToText(''); routeViewModel.clearSuggestions(); }}
                   activeOpacity={0.7}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear destination"
                 >
-                  <Ionicons name="close-circle" size={18} color={COLORS.textDim} />
+                  <Ionicons name="close-circle" size={18} color={ROUTE_COLORS.steel} />
                 </TouchableOpacity>
               )}
             </View>
@@ -107,8 +139,10 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
                       routeViewModel.selectToSuggestion(s);
                     }}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={s.placeName}
                   >
-                    <Ionicons name="location-outline" size={14} color={COLORS.textSecondary} />
+                    <Ionicons name="location-outline" size={14} color={ROUTE_COLORS.steel} />
                     <Text style={styles.suggestionText} numberOfLines={2}>{s.placeName}</Text>
                   </TouchableOpacity>
                 ))}
@@ -125,12 +159,12 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
               disabled={routeViewModel.isLoadingRoute}
             >
               {routeViewModel.isLoadingRoute ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
+                <ActivityIndicator size="small" color={ROUTE_COLORS.white} />
               ) : (
-                <Ionicons name="navigate" size={16} color={COLORS.white} />
+                <Ionicons name="navigate" size={16} color={ROUTE_COLORS.white} />
               )}
               <Text style={styles.goBtnText}>
-                {routeViewModel.isLoadingRoute ? 'Getting Route…' : 'Get Route'}
+                {routeViewModel.isLoadingRoute ? 'PLOTTING ROUTE…' : 'PLOT ROUTE'}
               </Text>
             </TouchableOpacity>
           )}
@@ -139,10 +173,33 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
             <Text style={styles.errorText}>{routeViewModel.routeError}</Text>
           )}
 
-          <Text style={styles.sectionLabel}>RECENT ROUTES</Text>
+          {routeViewModel.recentRoutes.length > 0 && (
+            <>
+              <Text style={styles.sectionLabel}>RECENT ROUTES</Text>
+              <View style={styles.recentCard}>
+                {routeViewModel.recentRoutes.map((r: RecentRoute, i: number) => (
+                  <TouchableOpacity
+                    key={r.id}
+                    style={[
+                      styles.recentItem,
+                      i < routeViewModel.recentRoutes.length - 1 && styles.recentItemBorder,
+                    ]}
+                    onPress={() => handleSelectRecent(r)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Route to ${r.placeName}`}
+                  >
+                    <Ionicons name="time-outline" size={16} color={ROUTE_COLORS.steel} />
+                    <Text style={styles.recentItemText} numberOfLines={1}>{r.placeName}</Text>
+                    <Ionicons name="chevron-forward" size={14} color={ROUTE_COLORS.steelDim} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
 
           <View style={styles.v2xNote}>
-            <Ionicons name="information-circle-outline" size={14} color={COLORS.textDim} />
+            <Text style={styles.v2xNotePrompt}>{'>'}</Text>
             <Text style={styles.v2xNoteText}>
               Routes are checked against active TIM broadcast zones before departure.
             </Text>
@@ -154,50 +211,55 @@ export const RouteScreen: React.FC<RouteScreenProps> = observer(({ routeViewMode
 });
 
 const styles = StyleSheet.create({
-  container:       { flex: 1, backgroundColor: COLORS.bg },
-  header:          { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, backgroundColor: COLORS.surface, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  headerAccent:    { width: 4, height: 36, borderRadius: 2, backgroundColor: COLORS.orange },
-  headerTitle:     { fontSize: 22, fontWeight: '700', color: COLORS.textPrimary, letterSpacing: -0.3 },
-  headerSub:       { fontSize: 12, color: COLORS.textSecondary, marginTop: 1 },
+  container: { flex: 1, backgroundColor: ROUTE_COLORS.bg },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 16,
+    backgroundColor: ROUTE_COLORS.panel,
+    borderBottomWidth: 1,
+    borderBottomColor: ROUTE_COLORS.amber,
+  },
+  headerLeft:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  headerAccent:    { width: 3, height: 32, backgroundColor: ROUTE_COLORS.amber },
+  headerTitle:     { fontFamily: ROUTE_FONTS.displayBlack, fontSize: 22, color: ROUTE_COLORS.ink, letterSpacing: 1 },
+  headerSub:       { fontFamily: ROUTE_FONTS.body, fontSize: 12, color: ROUTE_COLORS.steel, marginTop: 2 },
   scrollContent:   { padding: 16, paddingBottom: 40 },
   searchCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
+    backgroundColor: ROUTE_COLORS.panel,
+    borderRadius: 4,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: ROUTE_COLORS.hairline,
     paddingHorizontal: 14,
     paddingVertical: 4,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
   },
+  originRow:       { flexDirection: 'row', alignItems: 'center', height: 34, gap: 10 },
+  originDotRing:   { borderColor: ROUTE_COLORS.signal },
+  destDotRing:     { borderColor: ROUTE_COLORS.amber },
+  originText:      { fontFamily: ROUTE_FONTS.monoMedium, fontSize: 11, letterSpacing: 0.5, color: ROUTE_COLORS.steel },
+  connectorRow:    { flexDirection: 'row' },
+  connectorTrack:  { width: 18, height: CONNECTOR_HEIGHT, alignItems: 'center' },
   inputRow:        { flexDirection: 'row', alignItems: 'center', height: 50, gap: 10 },
   dotRing:         { width: 18, height: 18, borderRadius: 9, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   dot:             { width: 8, height: 8, borderRadius: 4 },
-  input:           { flex: 1, fontSize: 14, color: COLORS.textPrimary, height: '100%' },
+  input:           { flex: 1, fontFamily: ROUTE_FONTS.bodyMedium, fontSize: 14, color: ROUTE_COLORS.ink, height: '100%' },
   suggestionDropdown: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: ROUTE_COLORS.panelRaised,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    borderBottomLeftRadius: 12,
-    borderBottomRightRadius: 12,
+    borderTopColor: ROUTE_COLORS.hairline,
     marginHorizontal: -14,
     marginBottom: -4,
     zIndex: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 8,
   },
-  suggestionItem:  { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  suggestionText:  { flex: 1, fontSize: 13, color: COLORS.textPrimary, lineHeight: 18 },
+  suggestionItem:  { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: ROUTE_COLORS.hairline },
+  suggestionText:  { flex: 1, fontFamily: ROUTE_FONTS.body, fontSize: 13, color: ROUTE_COLORS.ink, lineHeight: 18 },
   goBtn: {
-    backgroundColor: COLORS.orange,
-    borderRadius: 10,
+    backgroundColor: ROUTE_COLORS.amber,
+    borderRadius: 3,
     paddingVertical: 13,
     paddingHorizontal: 32,
     alignSelf: 'center',
@@ -207,17 +269,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     marginBottom: 12,
-    shadowColor: COLORS.orange,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 4,
   },
-  goBtnText:       { fontSize: 15, fontWeight: '700', color: COLORS.white, letterSpacing: 0.2 },
-  errorText:       { fontSize: 12, color: COLORS.red, marginBottom: 12, paddingHorizontal: 4 },
-  sectionLabel:         { fontSize: 10, color: COLORS.textDim, fontWeight: '700', letterSpacing: 1.5, marginBottom: 10 },
-  v2xNote:              { flexDirection: 'row', alignItems: 'flex-start', gap: 6, paddingTop: 12 },
-  v2xNoteText:          { flex: 1, fontSize: 11, color: COLORS.textDim, lineHeight: 16 },
+  goBtnText:       { fontFamily: ROUTE_FONTS.displayExtraBold, fontSize: 14, color: ROUTE_COLORS.white, letterSpacing: 0.8 },
+  errorText:       { fontFamily: ROUTE_FONTS.bodyMedium, fontSize: 12, color: ROUTE_COLORS.danger, marginBottom: 12, paddingHorizontal: 4 },
+  sectionLabel:    { fontFamily: ROUTE_FONTS.displaySemiBold, fontSize: 10, color: ROUTE_COLORS.steel, letterSpacing: 1.5, marginBottom: 10 },
+  recentCard: {
+    backgroundColor: ROUTE_COLORS.panel,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: ROUTE_COLORS.hairline,
+    marginBottom: 4,
+  },
+  recentItem:       { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
+  recentItemBorder: { borderBottomWidth: 1, borderBottomColor: ROUTE_COLORS.hairline },
+  recentItemText:   { flex: 1, fontFamily: ROUTE_FONTS.body, fontSize: 13, color: ROUTE_COLORS.ink },
+  v2xNote:              { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingTop: 12 },
+  v2xNotePrompt:        { fontFamily: ROUTE_FONTS.monoSemiBold, fontSize: 12, color: ROUTE_COLORS.amberText },
+  v2xNoteText:          { flex: 1, fontFamily: ROUTE_FONTS.mono, fontSize: 11, color: ROUTE_COLORS.steel, lineHeight: 16 },
 });
 
 export default RouteScreen;

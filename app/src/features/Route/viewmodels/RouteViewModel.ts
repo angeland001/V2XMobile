@@ -1,4 +1,5 @@
 import { makeAutoObservable, reaction, runInAction } from 'mobx';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   lineString,
   booleanIntersects,
@@ -9,6 +10,7 @@ import {
   lineIntersect,
   bearing,
   along,
+  length as turfLength,
   distance as turfDistance,
 } from '@turf/turf';
 import type { Feature, LineString, Point } from 'geojson';
@@ -17,6 +19,9 @@ import { TimHit } from '../../TIM/models/TimTypes';
 import { SpatZoneService } from '../../SpatService/services/SpatZoneService';
 import { PreemptionConfigService } from '../../preemption/services/PreemptionConfigService';
 import { VoiceGuidanceService } from '../services/VoiceGuidanceService';
+
+const RECENT_ROUTES_STORAGE_KEY = 'v2x:recentRoutes';
+const MAX_RECENT_ROUTES = 5;
 
 // Distance ahead of the snapped position to aim the nav camera's heading at.
 const ROUTE_BEARING_LOOKAHEAD_METERS = 20;
@@ -43,6 +48,14 @@ export interface PreemptionHit {
   zoneId: string;
   zoneName: string;
   polygon: [number, number][];
+}
+
+// A previously-routed-to destination, persisted locally so it can be
+// re-selected from the "Recent Routes" list without re-typing/re-geocoding.
+export interface RecentRoute {
+  id: string;
+  placeName: string;
+  center: [number, number]; // [lng, lat]
 }
 
 // One candidate route returned by the Directions API (alternatives=true) —
@@ -78,6 +91,10 @@ export class RouteViewModel {
   toCoord: [number, number] | null = null;
   toLabel: string = '';
   userLocation: [number, number] | null = null;
+  // Most-recent-first, deduped by destination coordinate, capped at
+  // MAX_RECENT_ROUTES. Populated from AsyncStorage on construction and
+  // updated whenever a route is successfully fetched (see fetchDirections).
+  recentRoutes: RecentRoute[] = [];
 
   // ── Route overview ────────────────────────────────────────────────────────
   // All candidate routes from the last fetch (Directions alternatives=true);
@@ -125,6 +142,14 @@ export class RouteViewModel {
   // entered yet — drives the persistent (non-dismissing) nav alert UI.
   approachingTimZones: TimHit[] = [];
   approachingTimZoneDistancesM: Map<number, number> = new Map();
+  // Where each hit's entry point falls along the route, as a 0–1 fraction of
+  // total route length — drives the mile-marker strip on RoutePreviewSheet.
+  // Keyed the same as the hit arrays above (timId / zoneId); a hit missing
+  // from the map just means its position couldn't be resolved (malformed
+  // geometry) and its strip marker is skipped, same defensive posture as the
+  // rest of this V2X analysis section.
+  timHitRoutePositions: Map<number, number> = new Map();
+  preemptionHitRoutePositions: Map<string, number> = new Map();
 
   // ── Internal (non-observable) ─────────────────────────────────────────────
   private lastRerouteTime: number = 0;
@@ -144,6 +169,7 @@ export class RouteViewModel {
       () => this.timService.activeTims.length,
       () => { if (this.hasActiveRoute) this.analyzeTimIntersections(); },
     );
+    this.loadRecentRoutes();
   }
 
   // ── Computed getters ──────────────────────────────────────────────────────
@@ -223,6 +249,17 @@ export class RouteViewModel {
     this.showSuggestions = false;
   }
 
+  // Same effect as selectToSuggestion, but from a previously-routed-to
+  // destination — the user still reviews it on RouteScreen and taps "Get
+  // Route" themselves, same as picking a fresh geocoding suggestion.
+  selectRecentRoute(recent: RecentRoute): void {
+    this.toCoord = recent.center;
+    this.toLabel = recent.placeName;
+    this.toText = recent.placeName;
+    this.toSuggestions = [];
+    this.showSuggestions = false;
+  }
+
   setUserLocation(lngLat: [number, number]): void { this.userLocation = lngLat; }
 
   // ── Geocoding ─────────────────────────────────────────────────────────────
@@ -293,6 +330,8 @@ export class RouteViewModel {
     this.preemptionHits = [];
     this.approachingTimZones = [];
     this.approachingTimZoneDistancesM = new Map();
+    this.timHitRoutePositions = new Map();
+    this.preemptionHitRoutePositions = new Map();
   }
 
   // Swaps in an alternate route the user tapped (chip or map line) during
@@ -344,12 +383,19 @@ export class RouteViewModel {
   // ── Navigation progress (called from MapView on every position update) ────
 
   updateProgress(userLngLat: [number, number]): void {
-    if (!this.hasActiveRoute || this.steps.length === 0 || this.hasArrived) return;
+    // Step progress, arrival detection, and voice announcements are all
+    // turn-by-turn concerns — gated on isNavigating, not just hasActiveRoute,
+    // so a route preview (fetched but "Start Navigation" not yet tapped)
+    // can't trigger them. Without this, a GPS update landing near the
+    // destination — or a stale in-flight callback right as the screen swaps
+    // from the preview map to the live-driving map — could fire arrival or
+    // step-change speech before the user ever started navigating.
+    if (!this.hasActiveRoute || !this.isNavigating || this.steps.length === 0 || this.hasArrived) return;
 
     try {
       const userPt = point(userLngLat);
 
-      if (this.isNavigating) this.checkTimZoneAlerts(userPt);
+      this.checkTimZoneAlerts(userPt);
 
       // Arrival: direct distance to destination — reliable regardless of step count/distances
       if (this.toCoord) {
@@ -456,7 +502,9 @@ export class RouteViewModel {
   // ── Off-route detection ───────────────────────────────────────────────────
 
   checkOffRoute(userLngLat: [number, number]): void {
-    if (!this.hasActiveRoute || this.routeCoordinates.length < 2) return;
+    // Same reasoning as updateProgress — rerouting is a turn-by-turn concern,
+    // not something a route preview should trigger.
+    if (!this.hasActiveRoute || !this.isNavigating || this.routeCoordinates.length < 2) return;
     const now = Date.now();
     if (now - this.lastOffRouteCheck < OFF_ROUTE_CHECK_INTERVAL_MS) return;
     this.lastOffRouteCheck = now;
@@ -549,6 +597,7 @@ export class RouteViewModel {
 
       this.analyzeTimIntersections();
       this.analyzePreemptionZones();
+      this.addRecentRoute(this.toLabel || this.toText, to);
     } catch (err: any) {
       runInAction(() => {
         this.routeError = err?.message ?? 'Could not fetch route.';
@@ -630,7 +679,9 @@ export class RouteViewModel {
         configs.filter(c => c.signalGroup !== null).map(c => c.spatZoneId),
       );
       const routeLine: Feature<LineString> = lineString(this.routeCoordinates);
+      const routeLengthM = turfLength(routeLine, { units: 'meters' });
       const hits: PreemptionHit[] = [];
+      const positions = new Map<string, number>();
       for (const zone of zones) {
         if (!configuredZoneIds.has(zone.id)) continue;
         try {
@@ -639,14 +690,28 @@ export class RouteViewModel {
           const last = ring[ring.length - 1];
           if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
           if (ring.length < 4) continue;
-          if (booleanIntersects(routeLine, polygon([ring]))) {
-            hits.push({ zoneId: zone.id, zoneName: zone.name, polygon: zone.polygon });
+          const zonePoly = polygon([ring]);
+          if (!booleanIntersects(routeLine, zonePoly)) continue;
+          hits.push({ zoneId: zone.id, zoneName: zone.name, polygon: zone.polygon });
+
+          // Same "where does the route first cross this zone" measurement
+          // analyzeTimIntersections uses, expressed as a 0–1 fraction of the
+          // route for the strip rather than raw meters (that's only needed
+          // for the alert-lookahead math TIM zones use).
+          const crossings = lineIntersect(routeLine, zonePoly);
+          let entryLocationM = Infinity;
+          for (const crossing of crossings.features) {
+            const loc = nearestPointOnLine(routeLine, crossing, { units: 'meters' }).properties.location;
+            if (loc != null && loc < entryLocationM) entryLocationM = loc;
+          }
+          if (isFinite(entryLocationM) && routeLengthM > 0) {
+            positions.set(zone.id, Math.min(1, Math.max(0, entryLocationM / routeLengthM)));
           }
         } catch {
           // Skip malformed zone
         }
       }
-      runInAction(() => { this.preemptionHits = hits; });
+      runInAction(() => { this.preemptionHits = hits; this.preemptionHitRoutePositions = positions; });
     } catch {
       // Silent
     }
@@ -656,8 +721,10 @@ export class RouteViewModel {
     if (this.routeCoordinates.length < 2) return;
     try {
       const routeLine: Feature<LineString> = lineString(this.routeCoordinates);
+      const routeLengthM = turfLength(routeLine, { units: 'meters' });
       const hits: TimHit[] = [];
       const entryLocations = new Map<number, number>();
+      const positions = new Map<number, number>();
       for (const tim of this.timService.activeTims) {
         try {
           const poly = polygon(tim.geometry.coordinates);
@@ -683,12 +750,19 @@ export class RouteViewModel {
             const loc = nearestPointOnLine(routeLine, crossing, { units: 'meters' }).properties.location;
             if (loc != null && loc < entryLocationM) entryLocationM = loc;
           }
-          if (isFinite(entryLocationM)) entryLocations.set(tim.id, entryLocationM);
+          if (isFinite(entryLocationM)) {
+            entryLocations.set(tim.id, entryLocationM);
+            if (routeLengthM > 0) positions.set(tim.id, Math.min(1, Math.max(0, entryLocationM / routeLengthM)));
+          }
         } catch {
           // Skip malformed TIM
         }
       }
-      runInAction(() => { this.timHits = hits; this._timEntryRouteLocationM = entryLocations; });
+      runInAction(() => {
+        this.timHits = hits;
+        this._timEntryRouteLocationM = entryLocations;
+        this.timHitRoutePositions = positions;
+      });
     } catch {
       // Silent
     }
@@ -742,6 +816,35 @@ export class RouteViewModel {
     runInAction(() => {
       this.approachingTimZones = approaching;
       this.approachingTimZoneDistancesM = distances;
+    });
+  }
+
+  // ── Private: recent routes persistence ────────────────────────────────────
+
+  private async loadRecentRoutes(): Promise<void> {
+    try {
+      const raw = await AsyncStorage.getItem(RECENT_ROUTES_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      runInAction(() => { this.recentRoutes = parsed; });
+    } catch {
+      // Corrupt/unavailable storage — start with an empty list
+    }
+  }
+
+  // Most-recent-first, deduped by destination coordinate (re-routing to an
+  // already-recent place just moves it to the top instead of duplicating it).
+  private addRecentRoute(placeName: string, center: [number, number]): void {
+    if (!placeName) return;
+    const deduped = this.recentRoutes.filter(
+      (r) => r.center[0] !== center[0] || r.center[1] !== center[1],
+    );
+    const next = [{ id: `${center[0]},${center[1]}`, placeName, center }, ...deduped]
+      .slice(0, MAX_RECENT_ROUTES);
+    runInAction(() => { this.recentRoutes = next; });
+    AsyncStorage.setItem(RECENT_ROUTES_STORAGE_KEY, JSON.stringify(next)).catch(() => {
+      // Non-fatal — recents just won't persist across app restarts
     });
   }
 }

@@ -42,6 +42,8 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
               style={[styles.endBtn, isTablet && styles.endBtnTablet]}
               onPress={() => routeViewModel.clearRoute()}
               activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Done"
             >
               <Text style={[styles.endBtnText, isTablet && styles.endBtnTextTablet]}>Done</Text>
             </TouchableOpacity>
@@ -58,6 +60,8 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
                 style={[styles.iconBtn, { width: iconBtnSize, height: iconBtnSize }]}
                 onPress={() => routeViewModel.toggleVoiceGuidance()}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={routeViewModel.voiceGuidanceEnabled ? 'Mute voice guidance' : 'Enable voice guidance'}
               >
                 <Ionicons
                   name={routeViewModel.voiceGuidanceEnabled ? 'volume-high' : 'volume-mute'}
@@ -69,6 +73,8 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
                 style={[styles.iconBtn, { width: iconBtnSize, height: iconBtnSize }]}
                 onPress={onOverviewToggle}
                 activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={routeViewModel.isOverviewMode ? 'Return to navigation view' : 'Show route overview'}
               >
                 <Ionicons
                   name={routeViewModel.isOverviewMode ? 'navigate' : 'map-outline'}
@@ -80,6 +86,8 @@ export const NavigationSummaryBar: React.FC<Props> = observer(
                 style={[styles.endBtn, isTablet && styles.endBtnTablet]}
                 onPress={() => routeViewModel.clearRoute()}
                 activeOpacity={0.8}
+                accessibilityRole="button"
+                accessibilityLabel="End navigation"
               >
                 <Ionicons name="close" size={endIconSize} color="#fff" />
                 <Text style={[styles.endBtnText, isTablet && styles.endBtnTextTablet]}>End</Text>

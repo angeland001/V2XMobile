@@ -5,7 +5,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
 import { RouteViewModel, TimHit, PreemptionHit } from '../viewmodels/RouteViewModel';
 import { RoutePreviewSheet } from './RoutePreviewSheet';
+import { ROUTE_COLORS, ROUTE_FONTS, TIM_CATEGORY_STYLE } from '../../UI/appTheme';
+import { MarkerPin, MARKER_PIN_TIP_ANCHOR } from '../../UI/components/icons/MarkerPin';
 import { closeRing, normalizeToLngLat, type LngLat } from '../../../core/maps/coordinates';
+
+// Same averaging MapView.tsx's TIMLayer uses to place its zone badge —
+// duplicated locally rather than shared since MapView.tsx's own copy is
+// part of the live-nav HUD, out of scope for this pass.
+const lngLatCentroid = (coords: LngLat[]): [number, number] => [
+  coords.reduce((s, c) => s + c[0], 0) / coords.length,
+  coords.reduce((s, c) => s + c[1], 0) / coords.length,
+];
 
 MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
@@ -13,32 +23,31 @@ MapboxGL.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 // doesn't hug the edge of the visible (non-covered) map area.
 const SHEET_PADDING_MARGIN = 32;
 
-// Mapbox's own Street-style basemap already renders major/trunk roads in a
-// light orange/tan, so the planned route and destination pin use deeper,
-// more saturated shades from the same warm family as the app's orange
-// accent (COLORS.orange) — on-brand, but dark/rich enough not to wash out
-// against the lighter basemap roads. The marker is a gold/amber rather than
-// matching the route line so the endpoint still pops against a same-family
-// route color instead of blending into it.
-const ROUTE_COLOR = '#C2410C';
-const DESTINATION_COLOR = '#CA8A04';
-
-const TIM_ZONE_STYLES: Record<TimHit['category'], { fill: string; stroke: string }> = {
-  safety:        { fill: 'rgba(239, 68, 68, 0.28)',  stroke: '#EF4444' },
-  regulatory:    { fill: 'rgba(245, 158, 11, 0.28)', stroke: '#F59E0B' },
-  informational: { fill: 'rgba(59, 130, 246, 0.28)', stroke: '#3B82F6' },
-};
+// Route line is yellow and the destination pin is the app's orange accent —
+// deliberately different hues so the endpoint pops against the route color
+// instead of blending into it.
+const ROUTE_COLOR = '#FFC107';
+const DESTINATION_COLOR = '#FF8C00';
 
 // ---------------------------------------------------------------------------
 // Zone layers — only the TIM/preemption zones this specific route crosses
 // (routeVM.timHits / preemptionHits), not every active zone app-wide.
+//
+// Explicitly anchored above the route's topmost line layer (same
+// belowLayerID/aboveLayerID technique used for route-vs-route stacking
+// below) so zone fills/outlines are never hidden under the route line where
+// they overlap — relying on JSX mount order alone isn't a reliable way to
+// control Mapbox GL paint order.
 // ---------------------------------------------------------------------------
+
+const ZONE_ABOVE_LAYER_ID = 'preview-route-active-line';
 
 const RouteTimZonesLayer: React.FC<{ hits: TimHit[] }> = ({ hits }) => (
   <>
     {hits.map((hit) => {
-      const style = TIM_ZONE_STYLES[hit.category] ?? TIM_ZONE_STYLES.informational;
-      const outerRing = closeRing((hit.geometry.coordinates[0] as [number, number][]).map(normalizeToLngLat));
+      const style = TIM_CATEGORY_STYLE[hit.category] ?? TIM_CATEGORY_STYLE.informational;
+      const outerCoords = (hit.geometry.coordinates[0] as [number, number][]).map(normalizeToLngLat);
+      const outerRing = closeRing(outerCoords);
       if (outerRing.length < 3) return null;
 
       const shape: GeoJSON.Feature<GeoJSON.Polygon> = {
@@ -46,46 +55,94 @@ const RouteTimZonesLayer: React.FC<{ hits: TimHit[] }> = ({ hits }) => (
         properties: {},
         geometry: { type: 'Polygon', coordinates: [outerRing] },
       };
+      const centroid = lngLatCentroid(outerCoords);
 
       return (
-        <MapboxGL.ShapeSource key={`preview-tim-${hit.timId}`} id={`preview-tim-${hit.timId}`} shape={shape}>
-          <MapboxGL.FillLayer id={`preview-tim-fill-${hit.timId}`} style={{ fillColor: style.fill }} />
-          <MapboxGL.LineLayer id={`preview-tim-line-${hit.timId}`} style={{ lineColor: style.stroke, lineWidth: 2.5 }} />
-        </MapboxGL.ShapeSource>
+        <React.Fragment key={`preview-tim-${hit.timId}`}>
+          <MapboxGL.ShapeSource id={`preview-tim-${hit.timId}`} shape={shape}>
+            <MapboxGL.FillLayer id={`preview-tim-fill-${hit.timId}`} aboveLayerID={ZONE_ABOVE_LAYER_ID} style={{ fillColor: style.dimColor }} />
+            <MapboxGL.LineLayer id={`preview-tim-line-${hit.timId}`} aboveLayerID={`preview-tim-fill-${hit.timId}`} style={{ lineColor: style.color, lineWidth: 2.5 }} />
+          </MapboxGL.ShapeSource>
+          {/* Same category badge (icon + Safety/Regulatory/Info label) as
+              MapView.tsx's TIMLayer, so a zone reads identically whether
+              you're previewing the route or already navigating it. */}
+          <MapboxGL.MarkerView coordinate={centroid} allowOverlap={true}>
+            <View style={[timMarkerStyles.badge, { borderColor: style.color }]}>
+              <Ionicons name={style.icon} size={14} color={style.color} />
+              <Text style={[timMarkerStyles.label, { color: style.color }]}>{style.label}</Text>
+            </View>
+          </MapboxGL.MarkerView>
+        </React.Fragment>
       );
     })}
   </>
 );
 
+// Same MarkerPin + flash icon MapView.tsx's SpatZoneLayer uses in its
+// "icon" display mode — the preemption icon itself is what tells the driver
+// this route passes through a signal-preemption zone, so it's the marker
+// (not a filled polygon) that carries the meaning here.
 const RoutePreemptionZonesLayer: React.FC<{ hits: PreemptionHit[] }> = ({ hits }) => (
   <>
     {hits.map((hit) => {
       const ring = closeRing(hit.polygon as LngLat[]);
       if (ring.length < 3) return null;
-
-      const shape: GeoJSON.Feature<GeoJSON.Polygon> = {
-        type: 'Feature',
-        properties: {},
-        geometry: { type: 'Polygon', coordinates: [ring] },
-      };
+      const centroid = lngLatCentroid(ring);
 
       return (
-        <MapboxGL.ShapeSource key={`preview-spat-${hit.zoneId}`} id={`preview-spat-${hit.zoneId}`} shape={shape}>
-          <MapboxGL.FillLayer id={`preview-spat-fill-${hit.zoneId}`} style={{ fillColor: 'rgba(139, 92, 246, 0.2)' }} />
-          <MapboxGL.LineLayer id={`preview-spat-line-${hit.zoneId}`} style={{ lineColor: '#8B5CF6', lineWidth: 2.5 }} />
-        </MapboxGL.ShapeSource>
+        <MapboxGL.MarkerView
+          key={`preview-spat-${hit.zoneId}`}
+          coordinate={centroid}
+          anchor={{ x: 0.5, y: MARKER_PIN_TIP_ANCHOR }}
+          allowOverlap={true}
+        >
+          <MarkerPin size={30} iconSize={14} color={ROUTE_COLORS.preempt}>
+            <Ionicons name="flash" size={14} color="#FFFFFF" />
+          </MarkerPin>
+        </MapboxGL.MarkerView>
       );
     })}
   </>
 );
 
 // ---------------------------------------------------------------------------
-// Route lines — non-selected alternates dimmed and tappable, active route on
-// top.
+// Route lines — non-selected alternates are still fully opaque and tappable
+// (a low-opacity/desaturated treatment reads as "disabled" rather than "an
+// alternative you can pick"), just a solid neutral gray with a thin dark
+// casing for definition against the basemap, so the active route's yellow
+// still reads as primary without the alternates looking washed out.
+//
+// Where two options share the same road before splitting off, both lines
+// occupy the same pixels — whichever one Mapbox happens to paint last wins.
+// Declaring the active route first in JSX doesn't reliably guarantee it
+// paints on top, so its layers are anchored explicitly with belowLayerID
+// pointing at each alternate: added first (so the reference target exists),
+// then every alternate is explicitly inserted below it, making the active
+// route the top layer on any shared segment regardless of mount order.
 // ---------------------------------------------------------------------------
 
 const RouteLinesLayer: React.FC<{ routeVM: RouteViewModel }> = observer(({ routeVM }) => (
   <>
+    {routeVM.routeCoordinates.length >= 2 && (
+      <MapboxGL.ShapeSource
+        id="preview-route-active"
+        shape={{
+          type: 'Feature',
+          properties: {},
+          geometry: { type: 'LineString', coordinates: routeVM.routeCoordinates },
+        }}
+      >
+        <MapboxGL.LineLayer
+          id="preview-route-active-casing"
+          style={{ lineColor: '#1A1A2E', lineWidth: 3.5, lineOpacity: 0.25, lineCap: 'round', lineJoin: 'round' }}
+        />
+        <MapboxGL.LineLayer
+          id="preview-route-active-line"
+          style={{ lineColor: ROUTE_COLOR, lineWidth: 2, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+        />
+      </MapboxGL.ShapeSource>
+    )}
+
     {routeVM.routeOptions.map((option, index) => {
       if (index === routeVM.selectedRouteIndex) return null;
       const shape: GeoJSON.Feature<GeoJSON.LineString> = {
@@ -101,39 +158,29 @@ const RouteLinesLayer: React.FC<{ routeVM: RouteViewModel }> = observer(({ route
           onPress={() => routeVM.selectRouteOption(index)}
         >
           <MapboxGL.LineLayer
+            id={`preview-route-alt-casing-${index}`}
+            belowLayerID="preview-route-active-casing"
+            style={{ lineColor: '#1A1A2E', lineWidth: 2.5, lineOpacity: 0.15, lineCap: 'round', lineJoin: 'round' }}
+          />
+          <MapboxGL.LineLayer
             id={`preview-route-alt-line-${index}`}
-            style={{ lineColor: '#8A8FA3', lineWidth: 6, lineOpacity: 0.6, lineCap: 'round', lineJoin: 'round' }}
+            aboveLayerID={`preview-route-alt-casing-${index}`}
+            style={{ lineColor: '#9CA3AF', lineWidth: 1.5, lineOpacity: 1, lineCap: 'round', lineJoin: 'round' }}
           />
         </MapboxGL.ShapeSource>
       );
     })}
-
-    {routeVM.routeCoordinates.length >= 2 && (
-      <MapboxGL.ShapeSource
-        id="preview-route-active"
-        shape={{
-          type: 'Feature',
-          properties: {},
-          geometry: { type: 'LineString', coordinates: routeVM.routeCoordinates },
-        }}
-      >
-        <MapboxGL.LineLayer
-          id="preview-route-active-casing"
-          style={{ lineColor: '#1A1A2E', lineWidth: 8, lineOpacity: 0.25, lineCap: 'round', lineJoin: 'round' }}
-        />
-        <MapboxGL.LineLayer
-          id="preview-route-active-line"
-          style={{ lineColor: ROUTE_COLOR, lineWidth: 5, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
-        />
-      </MapboxGL.ShapeSource>
-    )}
   </>
 ));
 
 const DestinationFlag: React.FC<{ routeVM: RouteViewModel }> = observer(({ routeVM }) => {
   if (!routeVM.toCoord) return null;
   return (
-    <MapboxGL.MarkerView coordinate={routeVM.toCoord} anchor={{ x: 0.5, y: 1 }}>
+    // allowOverlap defaults to false on MarkerView — "adjacent markers will
+    // collapse and only one will be shown." Zoomed out, the destination
+    // flag ends up close on-screen to a TIM/preemption zone marker and
+    // loses that collapse, which is why it was disappearing.
+    <MapboxGL.MarkerView coordinate={routeVM.toCoord} anchor={{ x: 0.5, y: 1 }} allowOverlap={true}>
       <View style={destStyles.container}>
         {!!routeVM.toLabel && (
           <View style={destStyles.label}>
@@ -149,22 +196,41 @@ const DestinationFlag: React.FC<{ routeVM: RouteViewModel }> = observer(({ route
   );
 });
 
+const timMarkerStyles = StyleSheet.create({
+  badge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: ROUTE_COLORS.panel,
+    borderRadius: 12,
+    paddingVertical: 3,
+    paddingHorizontal: 7,
+    borderWidth: 1.5,
+  },
+  label: {
+    fontFamily: ROUTE_FONTS.bodySemiBold,
+    fontSize: 10,
+  },
+});
+
 const destStyles = StyleSheet.create({
   container: { alignItems: 'center' },
   label: {
-    backgroundColor: 'rgba(255,255,255,0.95)',
-    borderRadius: 6,
+    backgroundColor: ROUTE_COLORS.panel,
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: DESTINATION_COLOR,
     paddingHorizontal: 8,
     paddingVertical: 3,
     marginBottom: 4,
     maxWidth: 150,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.3,
     shadowRadius: 3,
     elevation: 3,
   },
-  labelText: { color: '#1A1A2E', fontSize: 11, fontWeight: '700' },
+  labelText: { fontFamily: ROUTE_FONTS.bodySemiBold, color: ROUTE_COLORS.ink, fontSize: 11 },
   circle: {
     width: 40,
     height: 40,
@@ -254,9 +320,9 @@ export const RoutePreviewMapScreen: React.FC<RoutePreviewMapScreenProps> = obser
           />
           <MapboxGL.UserLocation visible={true} />
 
+          <RouteLinesLayer routeVM={routeVM} />
           <RouteTimZonesLayer hits={routeVM.timHits} />
           <RoutePreemptionZonesLayer hits={routeVM.preemptionHits} />
-          <RouteLinesLayer routeVM={routeVM} />
           <DestinationFlag routeVM={routeVM} />
         </MapboxGL.MapView>
 

@@ -11,10 +11,11 @@ import { RouteScreen } from './src/features/UI/screens/RouteScreen';
 import { AlertsScreen } from './src/features/UI/screens/AlertsScreen';
 import { SettingsScreen } from './src/features/UI/screens/SettingsScreen';
 import { useResponsiveLayout } from './src/features/UI/hooks/useResponsiveLayout';
+import { ROUTE_COLORS, ROUTE_FONTS } from './src/features/UI/appTheme';
 
 const ACTIVE_COLOR = '#FF8C00';
-const INACTIVE_COLOR = '#7A7A8A';
-const BAR_COLOR = '#ffffff';
+const INACTIVE_COLOR: string = ROUTE_COLORS.steel;
+const BAR_COLOR: string = ROUTE_COLORS.panel;
 
 interface MainNavigatorProps {
   viewModel: MainViewModel;
@@ -215,7 +216,7 @@ const styles = StyleSheet.create({
     minWidth: 16,
     height: 16,
     borderRadius: 8,
-    backgroundColor: '#EF4444',
+    backgroundColor: ROUTE_COLORS.danger,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 3,
@@ -226,25 +227,25 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   badgeText: {
-    color: '#fff',
+    color: ROUTE_COLORS.white,
+    fontFamily: ROUTE_FONTS.bodySemiBold,
     fontSize: 9,
-    fontWeight: '700',
   },
   badgeTextTablet: {
     fontSize: 11,
   },
   label: {
+    fontFamily: ROUTE_FONTS.bodyMedium,
     fontSize: 10,
     color: INACTIVE_COLOR,
-    fontWeight: '500',
     letterSpacing: 0.3,
   },
   labelTablet: {
     fontSize: 13,
   },
   labelActive: {
+    fontFamily: ROUTE_FONTS.bodySemiBold,
     color: ACTIVE_COLOR,
-    fontWeight: '700',
   },
 });
 

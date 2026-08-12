@@ -331,7 +331,7 @@ const RouteLayer: React.FC<RouteLayerProps> = observer(({ mainViewModel }) => {
       />
       <MapboxGL.LineLayer
         id="route-line"
-        style={{ lineColor: '#FF8C00', lineWidth: 5, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+        style={{ lineColor: '#FFC107', lineWidth: 5, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
       />
     </MapboxGL.ShapeSource>
   );
