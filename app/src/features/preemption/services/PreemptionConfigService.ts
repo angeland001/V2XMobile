@@ -22,6 +22,7 @@ export class PreemptionConfigService {
           controllerIp: d.controller_ip,
           laneIds: Array.isArray(d.lane_ids) ? d.lane_ids : [],
           signalGroup: typeof d.signal_group === 'number' ? d.signal_group : null,
+          preemptChannel: typeof d.preempt_channel === 'number' ? d.preempt_channel : null,
           status: d.status,
         }));
     } catch {
@@ -66,6 +67,8 @@ export class PreemptionConfigService {
         laneIds: Array.isArray(data.lane_ids) ? data.lane_ids : [],
         signalGroup:
           typeof data.signal_group === 'number' ? data.signal_group : null,
+        preemptChannel:
+          typeof data.preempt_channel === 'number' ? data.preempt_channel : null,
         status: data.status,
       };
     } catch (error) {

@@ -18,7 +18,7 @@ import { VehicleMarkers } from "../../../SDSM/views/VehicleMarkers";
 import { VRUMarkers } from "../../../SDSM/views/VRUMarkers";
 import { TestingModeOverlay } from "../../../../testingFeatures/testingUI";
 import { LaneOverlay } from "../../../Lanes/views/components/LaneOverlay";
-import { TrafficLightPanel } from "../../../preemption/components/TrafficLightPanel";
+import { PreemptionStatusBanner } from "../../../preemption/components/PreemptionStatusBanner";
 import { LanesViewModel } from "../../../Lanes/viewmodels/LanesViewModel";
 import { CROSSWALK_POLYGONS } from "../../../Crosswalk/constants/CrosswalkCoordinates";
 import { CrosswalkDetectionService } from "../../../PedestrianDetector/services/CrosswalkDetectionService";
@@ -427,18 +427,18 @@ const OVERLAY_MENU_BOTTOM = 110;
 const BOTTOM_CENTER_ORDER = ["recenter", "toast"] as const;
 // Top-right stack while navigating on a wide car display: ETA chip lined up
 // with the nav banner, Auto Preemption stacked below it — keeps both clear
-// of the traffic light panel on the left instead of colliding with it.
+// of the preemption status banner on the left instead of colliding with it.
 const NAV_TOP_RIGHT_ORDER = ["etaBanner", "preemptionToggle"] as const;
 // Left stack for wide/short car displays: when Auto Preemption stays docked
 // left (i.e. not navigating — see preemptionDockRight), the screen is short
-// enough that its top-anchored spot and the traffic light panel's old
+// enough that its top-anchored spot and the preemption status banner's old
 // bottom-anchored spot could occupy the same vertical band. Stacking the
 // panel directly below the toggle's measured height removes the guesswork.
-const LEFT_STACK_ORDER = ["preemptionToggle", "trafficLightPanel"] as const;
-// Left inset for the traffic light panel specifically when it's stacked below
-// the toggle on a wide car display — PreemptionToggle's own position never
-// changes; only this value moves the panel. Edit this number to shift it.
-const TRAFFIC_LIGHT_PANEL_CAR_LEFT = 50;
+const LEFT_STACK_ORDER = ["preemptionToggle", "preemptionBanner"] as const;
+// Left inset for the preemption status banner specifically when it's stacked
+// below the toggle on a wide car display — PreemptionToggle's own position
+// never changes; only this value moves the banner. Edit this number to shift it.
+const PREEMPTION_BANNER_CAR_LEFT = 50;
 
 // Ease duration for the per-fix nav camera follow update. Longer than the
 // 50ms throttle interval so each new setCamera call overrides the previous
@@ -559,8 +559,8 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const etaBannerTop = isWide ? insets.top + 10 : navBannerHeight + 10;
     // Auto Preemption relocates to the right (stacked under the ETA chip)
     // any time navigation is active, on a phone as well as a wide car
-    // display — on a wide display that's what clears the traffic light
-    // panel on the left; on a phone it's what keeps the toggle out of the
+    // display — on a wide display that's what clears the preemption status
+    // banner on the left; on a phone it's what keeps the toggle out of the
     // TIM zone alert cards (TimToast), which are left-anchored below the
     // nav banner in that same state. Otherwise it keeps its original
     // top-left spot.
@@ -586,9 +586,9 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
         : insets.top + 30;
     // On a wide car display, the toggle only leaves its left-docked spot
     // while navigating (preemptionDockRight above) — any other time on that
-    // display it stays top-left, in the same column the traffic light panel
-    // used to bottom-anchor into, on a screen too short for both to fit
-    // without overlapping. Stack the panel below the toggle's real height
+    // display it stays top-left, in the same column the preemption status
+    // banner used to bottom-anchor into, on a screen too short for both to fit
+    // without overlapping. Stack the banner below the toggle's real height
     // instead in that one case; a normal phone has enough vertical room that
     // top-anchored toggle and bottom-anchored panel never meet. (On a phone
     // preemptionDockRight is now also true while navigating, but this line
@@ -596,9 +596,9 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     // Tablet joins this same stacked-left treatment (see leftStackCenterTop
     // above) regardless of aspect ratio, since it's centered rather than
     // reacting to a short car-HU screen.
-    const stackTrafficLightBelowToggle = (isWide || isTablet) && !preemptionDockRight;
-    const trafficLightPanelTop = stackTrafficLightBelowToggle
-      ? leftStack.offsetFor('trafficLightPanel', preemptionTop)
+    const stackPreemptionBannerBelowToggle = (isWide || isTablet) && !preemptionDockRight;
+    const preemptionBannerTop = stackPreemptionBannerBelowToggle
+      ? leftStack.offsetFor('preemptionBanner', preemptionTop)
       : undefined;
 
     // Recenter button unmounts as soon as the user stops panning away — clear
@@ -1054,21 +1054,15 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
 
     const routeVM = mainViewModel?.routeViewModel;
 
-    // While a preemption session has a target signal group, the panel must track
-    // THAT phase specifically rather than the zone's ambient default — the zone's
-    // configured signalGroup (SpatZoneService) and the preemption config's signalGroup
-    // (PreemptionConfigService) are independently sourced and can point at different
-    // movements, so falling back to the zone default here would show the wrong phase's
-    // color/timer while a preemption is actually in flight.
-    const preemptTargetGroup = preemptionViewModel.displayRequestedSignalGroup;
-    const effectiveSignalState =
-      preemptTargetGroup !== null
-        ? spatViewModel.getDisplaySignalStateForGroup(preemptTargetGroup)
-        : spatViewModel.displaySignalState;
-    const effectiveDurationLabel =
-      preemptTargetGroup !== null
-        ? spatViewModel.getDisplayPhaseDurationLabelForGroup(preemptTargetGroup)
-        : spatViewModel.displayPhaseDurationLabel;
+    // PreemptionStatusBanner reports preemption's own request/grant/clear
+    // lifecycle rather than trying to mirror the physical light color off
+    // the CUIP SPaT feed — see PreemptionStatusBanner.tsx for why (live
+    // captures showed the SPaT feed can go completely stale/frozen for an
+    // entire granted session on some preempt channels, which isn't
+    // debuggable against real, one-shot-only intersections). Uses the raw
+    // (non-grace-window) field so the banner disappears the instant the
+    // session actually ends, matching the old panel's behavior.
+    const isPreempting = preemptionViewModel.requestedPreemptChannel !== null;
 
     return (
       <View style={styles.container}>
@@ -1261,37 +1255,37 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           testingVehicleDisplayViewModel={testingVehicleDisplayViewModel}
         />
 
-        <TrafficLightPanel
-          // Panel housing/name/duration stay visible regardless of this setting —
-          // it only mutes the live light color and the ssmStatus-driven glow/pulse/
-          // border, i.e. whether the panel "lights up".
+        <PreemptionStatusBanner
+          // ssmStatus/intersectionName go straight to null/undefined the
+          // instant the session ends — no lingering display state to worry
+          // about now that the grace-window snapshot machinery has been
+          // removed along with the old panel.
           ssmStatus={
-            (mainViewModel?.settingsViewModel?.trafficLightPanelEnabled ?? true)
-              ? preemptionViewModel.displaySsmStatus
+            (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) && isPreempting
+              ? preemptionViewModel.ssmStatus
               : null
           }
-          intersectionName={preemptionViewModel.displayActiveZoneName ?? undefined}
-          heartbeatPulse={preemptionViewModel.heartbeatProgress}
-          durationLabel={effectiveDurationLabel}
-          top={trafficLightPanelTop}
-          left={stackTrafficLightBelowToggle ? TRAFFIC_LIGHT_PANEL_CAR_LEFT : undefined}
-          onLayout={leftStack.onLayout('trafficLightPanel')}
-          // Suppress the "unavailable" alert whenever the controller-light
-          // fallback below has something to show instead — a colored light
-          // next to an "unavailable" label would be a contradiction.
-          spatUnavailable={spatViewModel.displaySpatUnavailable && preemptionViewModel.controllerLight === null}
-          activeLight={
-            !(mainViewModel?.settingsViewModel?.trafficLightPanelEnabled ?? true) ? null :
-            effectiveSignalState === SignalState.GREEN ? 'green' :
-            effectiveSignalState === SignalState.RED ? 'red' :
-            effectiveSignalState === SignalState.YELLOW ? 'yellow' :
-            // No live CUIP color for the phase we actually care about right now —
-            // whether that's because this intersection has no CUIP coverage at all
-            // (e.g. Lab_Device data that hasn't arrived) or a transient corridor
-            // gap, the preempt bridge's own live controller reading is a legitimate
-            // signal any time a preemption session has one. Prefer it over nothing.
-            preemptionViewModel.controllerLight
+          feedStale={isPreempting ? preemptionViewModel.feedStale : false}
+          // Once the session itself has ended, the banner has one more thing
+          // it can still usefully report: whether the controller actually
+          // confirmed the clear. lastClearConfirmed/lastClearZoneName run on
+          // their own longer timeline (see PreemptionViewModel) since a live
+          // capture showed clear confirmation can take several seconds.
+          clearUnconfirmed={
+            (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) &&
+            !isPreempting &&
+            preemptionViewModel.lastClearConfirmed === false
           }
+          intersectionName={
+            isPreempting
+              ? preemptionViewModel.activeZoneName ?? undefined
+              : preemptionViewModel.lastClearConfirmed === false
+                ? preemptionViewModel.lastClearZoneName ?? undefined
+                : undefined
+          }
+          top={preemptionBannerTop}
+          left={stackPreemptionBannerBelowToggle ? PREEMPTION_BANNER_CAR_LEFT : undefined}
+          onLayout={leftStack.onLayout('preemptionBanner')}
         />
 
         {routeVM && (

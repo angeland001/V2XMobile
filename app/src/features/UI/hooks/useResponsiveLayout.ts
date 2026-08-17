@@ -5,7 +5,9 @@ export type SizeClass = 'phone' | 'wideCompact' | 'tablet';
 // Galaxy Tab S10's short side is ~800dp logical; a rotated phone or car
 // head-unit display stays well under this, so shortSide (not aspect ratio
 // alone) is what distinguishes "actually a tablet" from "wide but small."
-const TABLET_MIN_SHORT_SIDE = 700;
+// Exported so other device-class checks (e.g. the phone portrait lock) use
+// the same threshold instead of duplicating the magic number.
+export const TABLET_MIN_SHORT_SIDE = 700;
 
 export function useResponsiveLayout() {
   const { width, height } = useWindowDimensions();

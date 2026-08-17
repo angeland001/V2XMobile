@@ -53,11 +53,12 @@ export class SpatWebSocketService {
   private static reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
   private static latestByIntersection: Map<string, CacheEntry> = new Map();
   private static loggedFirstMessage = false;
-  // TEMP diagnostic for the phase-vs-overlap preemption investigation — logs
-  // every frame's status-group arrays (not the full ~100-field payload) so a
-  // preempted signalGroup's arrival in phaseStatusGroup* vs overlapStatusGroup*
-  // can be read directly off the console during a test run. Remove once the
-  // mismatch between "preempt granted" and the SPaT panel's color is diagnosed.
+  // TEMP diagnostic, logs every frame's status-group arrays (not the full
+  // ~100-field payload) so they can be read directly off the console during
+  // a test run. Was used to investigate the SPaT-driven preemption traffic
+  // light, since retired (see PreemptionStatusBanner) in favor of a
+  // protocol-only status display that doesn't depend on this feed at all —
+  // flip back on only if some other SPaT-feed investigation needs it.
   private static readonly LOG_EVERY_FRAME = false;
   // The intersection the current zone wants live data for. null means nothing
   // needs a connection right now — drives both whether to (re)connect and
@@ -141,6 +142,8 @@ export class SpatWebSocketService {
               `overlapG=${JSON.stringify(data.overlapStatusGroupGreens ?? [])}`,
               `overlapY=${JSON.stringify(data.overlapStatusGroupYellows ?? [])}`,
               `overlapR=${JSON.stringify(data.overlapStatusGroupReds ?? [])}`,
+              `intStatus=${data.spatIntersectionStatus ?? '?'}`,
+              `discFlag=${data.spatDiscontinuousChangeFlag ?? '?'}`,
             );
           }
 

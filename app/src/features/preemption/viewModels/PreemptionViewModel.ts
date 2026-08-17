@@ -15,32 +15,38 @@ export class PreemptionViewModel {
   insideZone = false;
   ssmStatus: SsmStatus = null;
   activeZoneName: string | null = null;
-  heartbeatProgress = 0; // 0–1, cycles every 1.5 s while heartbeat is running
+  // Timestamp of the current 1.5s heartbeat cycle's start. No longer read by
+  // any UI (previously drove a progress-bar animation that's since been
+  // removed) — left in place since it's part of the heartbeat timing logic
+  // itself, not the display layer.
+  heartbeatCycleStart: number | null = null;
 
   // requestedSignalGroup is sourced from the dashboard config; controllerSignalState
   // is current_state, which the preempt bridge reads live off the physical
   // controller — see MOBILE_INTEGRATION.md for what current_state reports.
   requestedSignalGroup: number | null = null;
+  // The controller's SNMP preempt channel for the active session. Non-null
+  // here is what PreemptionStatusBanner/MapView treat as "a session is
+  // active" — see isPreempting in MapView.tsx.
+  requestedPreemptChannel: number | null = null;
   controllerSignalState: number | null = null;
 
-  // Snapshot of the fields above, taken when a session clears, so
-  // TrafficLightPanel can keep showing the last known state for
-  // EXIT_GRACE_MS after the vehicle actually leaves the zone — see the
-  // display* getters below. Doesn't delay the real session teardown
-  // (callClear/sessionId/heartbeat all still happen immediately).
-  private lastActiveZoneName: string | null = null;
-  private lastSsmStatus: SsmStatus = null;
-  private lastRequestedSignalGroup: number | null = null;
-  private lastControllerSignalState: number | null = null;
-  private graceClearTimeout: NodeJS.Timeout | null = null;
-  // Keep in sync with SpatViewModel's EXIT_GRACE_MS — both linger the same
-  // TrafficLightPanel render for the same window after zone exit.
-  private static readonly EXIT_GRACE_MS = 3000;
+  // Whether the controller confirmed the most recent /preempt/clear call —
+  // null until that response comes back. A live capture showed /preempt/clear
+  // taking 4+ seconds to report back (the backend polls the controller up to
+  // 10 times before giving up), so this runs on its own longer display
+  // timeout (CLEAR_CONFIRM_DISPLAY_MS) rather than a short one that could
+  // expire before the response even arrives. PreemptionStatusBanner surfaces
+  // this so a clear that never confirmed doesn't just silently vanish as if
+  // the session wrapped up cleanly.
+  lastClearConfirmed: boolean | null = null;
+  lastClearZoneName: string | null = null;
+  private clearConfirmTimeout: NodeJS.Timeout | null = null;
+  private static readonly CLEAR_CONFIRM_DISPLAY_MS = 10_000;
 
   // Tracks the most recent successful start/heartbeat response. Drives
-  // feedStale below, which the Android Auto screen (see CarBridgeService.ts)
-  // uses to fall back to "Status Unavailable" instead of continuing to show
-  // a live-looking status once the preempt bridge has gone quiet.
+  // feedStale below, which callers use to detect a preempt bridge that has
+  // gone quiet instead of continuing to show a live-looking status.
   private lastHeartbeatSuccessAt: number | null = null;
   feedStale = false;
   // Mirrors SpatWebSocketService.STALE_MS so both feeds use the same
@@ -53,8 +59,7 @@ export class PreemptionViewModel {
   private trackedZoneId: string | null = null;
   private isPendingStart = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
-  private progressInterval: NodeJS.Timeout | null = null;
-  private heartbeatCycleStart: number | null = null;
+  private staleCheckInterval: NodeJS.Timeout | null = null;
 
   // GPS Debounce: require 3 consecutive samples in same zone to trigger change
   private zoneDetectionBuffer: string[] = [];
@@ -271,6 +276,7 @@ export class PreemptionViewModel {
         this.sessionId = result.sessionId;
         this.ssmStatus = result.ssmStatus;
         this.requestedSignalGroup = config.signalGroup;
+        this.requestedPreemptChannel = config.preemptChannel;
         this.controllerSignalState = null;
         this.lastHeartbeatSuccessAt = Date.now();
         console.log(
@@ -304,36 +310,33 @@ export class PreemptionViewModel {
         this.callHeartbeat(this.sessionId);
         // Reset cycle so the progress bar restarts from 0
         runInAction(() => {
-          this.heartbeatProgress = 0;
           this.heartbeatCycleStart = Date.now();
         });
       }
     }, 1500);
 
-    // Progress ticker at 10 Hz — drives the progress bar in the UI
-    this.progressInterval = setInterval(() => {
-      if (this.heartbeatCycleStart === null) return;
-      const elapsed = Date.now() - this.heartbeatCycleStart;
+    // Stale-feed check only, at a coarse cadence — feedStale drives
+    // PreemptionStatusBanner's "connection lost" state.
+    this.staleCheckInterval = setInterval(() => {
       runInAction(() => {
-        this.heartbeatProgress = Math.min(1, elapsed / 1500);
         this.feedStale =
           this.lastHeartbeatSuccessAt !== null &&
           Date.now() - this.lastHeartbeatSuccessAt > PreemptionViewModel.HEARTBEAT_STALE_MS;
       });
-    }, 100);
+    }, 1000);
 
     console.log('[Preemption] Heartbeat started (1.5 second interval)');
   }
 
   private stopHeartbeat(): void {
-    if (!this.heartbeatInterval && !this.progressInterval) return;
+    if (!this.heartbeatInterval && !this.staleCheckInterval) return;
     clearInterval(this.heartbeatInterval!);
-    clearInterval(this.progressInterval!);
+    clearInterval(this.staleCheckInterval!);
     this.heartbeatInterval = null;
-    this.progressInterval = null;
+    this.staleCheckInterval = null;
     this.heartbeatCycleStart = null;
     this.lastHeartbeatSuccessAt = null;
-    runInAction(() => { this.heartbeatProgress = 0; this.feedStale = false; });
+    runInAction(() => { this.feedStale = false; });
     console.log('[Preemption] Heartbeat stopped');
   }
 
@@ -356,13 +359,11 @@ export class PreemptionViewModel {
     // Call CLEAR
     this.callClear(sessionId);
 
-    // Snapshot before clearing so the display getters can linger this state
-    // for the driver for a couple seconds after they've actually left.
-    this.lastActiveZoneName = this.activeZoneName;
-    this.lastSsmStatus = this.ssmStatus;
-    this.lastRequestedSignalGroup = this.requestedSignalGroup;
-    this.lastControllerSignalState = this.controllerSignalState;
-    this.scheduleGraceClear();
+    // Reset here (not just at declaration) so a stale confirmation result
+    // from a previous zone's clear can't briefly show through before this
+    // clear's own response arrives.
+    this.lastClearConfirmed = null;
+    this.lastClearZoneName = this.activeZoneName;
 
     // Reset session state
     this.sessionId = null;
@@ -370,44 +371,10 @@ export class PreemptionViewModel {
     this.activeZoneName = null;
     this.validEntry = false;
     this.requestedSignalGroup = null;
+    this.requestedPreemptChannel = null;
     this.controllerSignalState = null;
 
     console.log('[Preemption] Session cleared');
-  }
-
-  private scheduleGraceClear(): void {
-    if (this.graceClearTimeout) {
-      clearTimeout(this.graceClearTimeout);
-    }
-    this.graceClearTimeout = setTimeout(() => {
-      this.graceClearTimeout = null;
-      runInAction(() => {
-        this.lastActiveZoneName = null;
-        this.lastSsmStatus = null;
-        this.lastRequestedSignalGroup = null;
-        this.lastControllerSignalState = null;
-      });
-    }, PreemptionViewModel.EXIT_GRACE_MS);
-  }
-
-  // Display-only variants that fall back to the pre-clear snapshot for
-  // EXIT_GRACE_MS after a session ends, so TrafficLightPanel keeps showing
-  // the driver's last known state for a couple seconds after they leave the
-  // zone instead of blanking out immediately.
-  get displayActiveZoneName(): string | null {
-    return this.activeZoneName ?? this.lastActiveZoneName;
-  }
-
-  get displaySsmStatus(): SsmStatus {
-    return this.ssmStatus ?? this.lastSsmStatus;
-  }
-
-  get displayRequestedSignalGroup(): number | null {
-    return this.requestedSignalGroup ?? this.lastRequestedSignalGroup;
-  }
-
-  get displayControllerSignalState(): number | null {
-    return this.controllerSignalState ?? this.lastControllerSignalState;
   }
 
   // ============ Config Sync ============
@@ -547,72 +514,6 @@ export class PreemptionViewModel {
     }
   }
 
-  // Traffic-light color derived from the preempt bridge's live controller
-  // reading, for intersections CUIP's spat-events stream doesn't cover (e.g.
-  // the lab bench controller) — the only other live source TrafficLightPanel
-  // has. current_state is a signal-group number, not a color: green once the
-  // controller's active phase is the one we asked for, red otherwise. null
-  // (no light shown) until the first heartbeat reports a controller state.
-  get controllerLight(): 'red' | 'green' | null {
-    const state = this.displayControllerSignalState;
-    const requested = this.displayRequestedSignalGroup;
-    if (state === null || requested === null) return null;
-    return state === requested ? 'green' : 'red';
-  }
-
-  // ============ Android Auto bridge display ============
-  // Collapses the underlying zone/session/heartbeat state into the coarse
-  // state shown on the Android Auto screen (Approaching/Requested → Granted/
-  // Active → Cleared, plus Idle and a degraded "Status Unavailable" branch)
-  // — see CarBridgeService.ts / PreemptionMessageScreen.kt. Deliberately
-  // coarser than the phone UI: no TIM alerts, no numeric SPaT phase, and no
-  // status is shown once the underlying feed (feedStale) has gone quiet.
-  //
-  // `ssmStatus` (live) vs `displaySsmStatus` (lingers for EXIT_GRACE_MS after
-  // a session ends) distinguishes an active session from the just-cleared
-  // grace window: live === null but display !== null means "just cleared."
-  get carStatusText(): string {
-    const isLive = this.ssmStatus !== null;
-    const status = this.displaySsmStatus;
-
-    if (isLive && this.feedStale) return 'Status Unavailable';
-    if (!isLive && status !== null) return 'Preemption Cleared';
-
-    switch (status) {
-      case 'requesting':
-        return 'Requesting Preemption';
-      case 'granted':
-        return this.controllerLight === 'green' ? 'Preemption Active' : 'Preemption Granted';
-      case 'cancelled':
-        return 'Preemption Denied';
-      default:
-        return this.insideZone ? 'Entering Zone' : 'No Active Zone';
-    }
-  }
-
-  get carStatusColor(): 'green' | 'yellow' | 'red' | 'gray' {
-    const isLive = this.ssmStatus !== null;
-    const status = this.displaySsmStatus;
-
-    if (isLive && this.feedStale) return 'gray';
-    if (!isLive && status !== null) return 'gray';
-
-    switch (status) {
-      case 'requesting':
-        return 'yellow';
-      case 'granted':
-        return this.controllerLight === 'green' ? 'green' : 'yellow';
-      case 'cancelled':
-        return 'red';
-      default:
-        return 'gray';
-    }
-  }
-
-  get carZoneName(): string {
-    return this.displayActiveZoneName ?? 'V2X Preemption';
-  }
-
   private async callClear(sessionId: string): Promise<void> {
     console.log('[API] POST /preempt/clear');
     console.log('[API] Request body:', { session_id: sessionId });
@@ -635,13 +536,30 @@ export class PreemptionViewModel {
         async (response) => {
           const data = await response.json();
           console.log('[API] CLEAR | ok:', data.ok, '| detail:', data.detail);
+          runInAction(() => { this.lastClearConfirmed = data.ok === true; });
           return true;
         },
         { maxRetries: 2 }, // Clear less critical than START
       );
     } catch (error) {
       console.log('[API] Clear failed after retries:', error);
+      runInAction(() => { this.lastClearConfirmed = false; });
+    } finally {
+      this.scheduleClearConfirmExpiry();
     }
+  }
+
+  private scheduleClearConfirmExpiry(): void {
+    if (this.clearConfirmTimeout) {
+      clearTimeout(this.clearConfirmTimeout);
+    }
+    this.clearConfirmTimeout = setTimeout(() => {
+      this.clearConfirmTimeout = null;
+      runInAction(() => {
+        this.lastClearConfirmed = null;
+        this.lastClearZoneName = null;
+      });
+    }, PreemptionViewModel.CLEAR_CONFIRM_DISPLAY_MS);
   }
 
   // Cleanup on unmount
@@ -654,9 +572,9 @@ export class PreemptionViewModel {
       this.clearSession();
     }
     this.stopHeartbeat();
-    if (this.graceClearTimeout) {
-      clearTimeout(this.graceClearTimeout);
-      this.graceClearTimeout = null;
+    if (this.clearConfirmTimeout) {
+      clearTimeout(this.clearConfirmTimeout);
+      this.clearConfirmTimeout = null;
     }
     this.isPendingStart = false;
     this.zoneDetectionBuffer = [];

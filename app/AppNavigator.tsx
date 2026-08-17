@@ -4,12 +4,22 @@ import { observer } from 'mobx-react-lite';
 import { MainViewModel } from './src/Main/viewmodels/MainViewModel';
 import { MainNavigator } from './MainNavigator';
 import { TimToast } from './src/features/UI/components/TimToast';
+import { startTimCarBridge } from './src/features/CarApp/CarBridgeService';
+import { applyPhoneOrientationLock } from './src/core/utils/orientationLock';
 
 const mainViewModel = new MainViewModel();
 
 export const AppNavigator: React.FC = observer(() => {
   useEffect(() => {
+    applyPhoneOrientationLock();
+
+    const stopCarBridge = startTimCarBridge(
+      mainViewModel.timService,
+      mainViewModel.routeViewModel,
+      mainViewModel.settingsViewModel,
+    );
     return () => {
+      stopCarBridge();
       mainViewModel.cleanup();
     };
   }, []);

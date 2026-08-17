@@ -39,8 +39,6 @@ export class SpatViewModel {
   private rawSpatData: Record<string, any> | null = null;
   private lastRawSpatData: Record<string, any> | null = null;
   private graceClearTimeout: NodeJS.Timeout | null = null;
-  // Keep in sync with PreemptionViewModel's EXIT_GRACE_MS — both linger the
-  // same TrafficLightPanel render for the same window after zone exit.
   private static readonly EXIT_GRACE_MS = 3000;
 
   preferredZoneIds: string[] = [];
@@ -308,9 +306,7 @@ export class SpatViewModel {
 
   // Display-only variants that linger the last live value for
   // EXIT_GRACE_MS after leaving a zone, instead of snapping to the "nothing
-  // here" state the instant GPS crosses the exit line. TrafficLightPanel
-  // reads these (not the raw fields above) so it keeps showing the light the
-  // driver just had for a couple seconds after the intersection is behind them.
+  // here" state the instant GPS crosses the exit line.
   get displaySignalState(): SignalState {
     return this.shouldShowDisplay ? this.signalState : this.lastSignalState;
   }

@@ -6,6 +6,6 @@ import androidx.car.app.Session
 
 class SpatSession : Session() {
     override fun onCreateScreen(intent: Intent): Screen {
-        return PreemptionMessageScreen(carContext)
+        return TimZoneScreen(carContext)
     }
 }

@@ -260,7 +260,7 @@ export const TimToast: React.FC<TimToastProps> = observer(
 
     // Wide car displays (Android Auto / DHU) while navigating: forced all
     // the way down to the literal bottom edge. bottom:110 used to put this
-    // centered card in the same vertical band as TrafficLightPanel
+    // centered card in the same vertical band as PreemptionStatusBanner
     // (bottom-left, wrapper bottom: 100 + navOffset) and ZoomControls
     // (bottom-right, container bottom: 110 + navOffset) — on the short,
     // wide DHU emulator screen that reads as sitting adjacent to both. This

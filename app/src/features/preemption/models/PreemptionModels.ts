@@ -6,6 +6,7 @@ export interface PreemptionZoneConfigApiResponse {
   controller_ip: string | null;
   lane_ids: number[];
   signal_group: number;
+  preempt_channel: number;
   status: string;
 }
 
@@ -17,6 +18,10 @@ export interface PreemptionZoneConfig {
   controllerIp: string | null;
   laneIds: number[];
   signalGroup: number | null;
+  // The controller's SNMP preempt channel — this is what actually gets
+  // activated on grant. Non-null is what marks a session as active for
+  // display purposes; see PreemptionViewModel.requestedPreemptChannel.
+  preemptChannel: number | null;
   status: string;
 }
 

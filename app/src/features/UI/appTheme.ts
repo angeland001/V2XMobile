@@ -4,7 +4,7 @@
 // DSRC/C-V2X broadcasts (TIM messages, signal-preemption zones) as it
 // drives. Originated on the Route tab (search/preview) and now shared by
 // Alerts, Settings, and the tab bar. The Map tab's live-driving HUD
-// (NavigationBanner, NavigationSummaryBar, MapLegend, TrafficLightPanel,
+// (NavigationBanner, NavigationSummaryBar, MapLegend, PreemptionStatusBanner,
 // etc.) is a separate, not-yet-migrated pass — it still reads from
 // features/UI/theme.ts (COLORS) and its own local hardcoded colors.
 //

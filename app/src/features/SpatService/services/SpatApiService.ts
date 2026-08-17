@@ -43,6 +43,7 @@ export class SpatApiService {
 
     return { minS: minRaw, maxS: maxRaw };
   }
+
 }
 
 export default SpatApiService;

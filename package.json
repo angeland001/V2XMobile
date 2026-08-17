@@ -39,6 +39,7 @@
     "expo-location": "~18.0.10",
     "expo-orientation-sensor": "^2.1.0",
     "expo-router": "~4.0.21",
+    "expo-screen-orientation": "~8.0.4",
     "expo-sensors": "~14.0.2",
     "expo-speech": "~13.0.1",
     "expo-splash-screen": "~0.29.24",

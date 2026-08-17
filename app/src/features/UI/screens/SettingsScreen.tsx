@@ -162,6 +162,14 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
             value={settingsViewModel.informationalAlerts}
             onToggle={(v) => { settingsViewModel.informationalAlerts = v; }}
           />
+          <View style={styles.cardDivider} />
+          <ToggleRow
+            icon="car-outline"
+            label="Android Auto Zone Badges"
+            sublabel="Show TIM zone alerts on the car display"
+            value={settingsViewModel.carDisplayAlerts}
+            onToggle={(v) => { settingsViewModel.carDisplayAlerts = v; }}
+          />
         </View>
 
         <Text style={styles.sectionLabel}>MAP</Text>
@@ -184,10 +192,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
           <View style={styles.cardDivider} />
           <ToggleRow
             icon="flash-outline"
-            label="Traffic Light Panel"
-            sublabel="Light up with live signal color"
-            value={settingsViewModel.trafficLightPanelEnabled}
-            onToggle={(v) => { settingsViewModel.trafficLightPanelEnabled = v; }}
+            label="Preemption Status Banner"
+            sublabel="Show requested / granted / cleared status"
+            value={settingsViewModel.preemptionBannerEnabled}
+            onToggle={(v) => { settingsViewModel.preemptionBannerEnabled = v; }}
           />
           <View style={styles.cardDivider} />
           <SegmentedRow

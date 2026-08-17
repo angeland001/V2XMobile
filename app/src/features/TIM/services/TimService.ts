@@ -11,7 +11,18 @@ import {
 import type { Feature, Polygon, MultiPolygon } from 'geojson';
 import { API_CONFIG } from '../../../core/api/config';
 import { normalizeToLngLat, closeRing } from '../../../core/maps/coordinates';
-import { TimMessage, TimHit, timCategoryFromType } from '../models/TimTypes';
+import { TimMessage, TimHit, TimCategory, timCategoryFromType } from '../models/TimTypes';
+
+export interface NearbyTim {
+  timId: number;
+  timType: string;
+  distanceMi: number;
+  // True while the user is inside the zone's raw polygon, or was until they
+  // left it without yet heading away — see activeInsideIds in checkProximity.
+  inside: boolean;
+}
+
+export type NearbyByCategory = Record<TimCategory, NearbyTim | null>;
 
 export interface TimToastItem {
   id: string;
@@ -42,10 +53,20 @@ export class TimService {
   alertLog: TimAlertLogItem[] = [];
   unreadAlertCount: number = 0;
   timDistances: Map<number, number> = new Map();
+  // Nearest zone per category the user is currently inside the buffer of AND
+  // heading toward — live/continuous (unlike alertedIds below, which is a
+  // one-shot "fired once" gate for the toast). Drives the Android Auto badge
+  // display, which needs to reflect the current approach state, not a
+  // single historical alert.
+  nearbyByCategory: NearbyByCategory = { safety: null, regulatory: null, informational: null };
 
   private pollInterval: NodeJS.Timeout | null = null;
   private bufferedCache = new Map<number, Feature<Polygon | MultiPolygon>>();
   private alertedIds = new Set<number>();
+  // Zones the user is currently inside, or was inside and hasn't yet both
+  // left AND turned away from — see the dismiss rule in checkProximity.
+  // Distinct from alertedIds, which only gates the one-shot toast.
+  private activeInsideIds = new Set<number>();
   // False until the first checkProximity pass with real TIM data. That pass seeds
   // alertedIds for anything already in-buffer without alerting — so a zone that
   // was already "true" the moment monitoring started (e.g. at app boot) doesn't
@@ -59,6 +80,7 @@ export class TimService {
       alertLog: observable,
       unreadAlertCount: observable,
       timDistances: observable,
+      nearbyByCategory: observable,
       start: action,
       stop: action,
       checkProximity: action,
@@ -79,12 +101,14 @@ export class TimService {
       this.pollInterval = null;
     }
     this.alertedIds.clear();
+    this.activeInsideIds.clear();
     this.bufferedCache.clear();
     this.hasSeededInitialProximity = false;
     runInAction(() => {
       this.activeTims = [];
       this.toastQueue = [];
       this.timDistances = new Map();
+      this.nearbyByCategory = { safety: null, regulatory: null, informational: null };
     });
   }
 
@@ -104,15 +128,17 @@ export class TimService {
     const userPoint = point([longitude, latitude]);
     const nowInBuffer = new Set<number>();
     const newDistances = new Map<number, number>();
+    const newNearby: NearbyByCategory = { safety: null, regulatory: null, informational: null };
     const isSeedPass = !this.hasSeededInitialProximity;
     this.hasSeededInitialProximity = true;
 
     for (const tim of this.activeTims) {
+      let distMi: number | undefined;
       try {
         const poly = polygon(tim.geometry.coordinates);
         const c = centroid(poly);
-        const dist = distance(userPoint, c, { units: 'miles' });
-        newDistances.set(tim.id, dist);
+        distMi = distance(userPoint, c, { units: 'miles' });
+        newDistances.set(tim.id, distMi);
       } catch {}
 
       const bufferedGeom = this.bufferedCache.get(tim.id);
@@ -122,25 +148,51 @@ export class TimService {
 
       if (inBuffer) {
         nowInBuffer.add(tim.id);
+        const headingOk = heading === null || this.isHeadingTowardZone(latitude, longitude, tim, heading);
+
+        // "Inside" the zone itself (not just its 0.5mi buffer). Once inside,
+        // keep reporting inside:true after the user exits the polygon until
+        // they're ALSO no longer heading toward it — leaving the zone while
+        // still travelling through/toward it (boundary jitter, a large zone)
+        // shouldn't flip the badge off and on. Only left+heading-away dismisses it.
+        let poly: Feature<Polygon> | undefined;
+        try {
+          poly = polygon(tim.geometry.coordinates);
+        } catch {}
+        const insideZone = poly != null && booleanPointInPolygon(userPoint, poly);
+        if (insideZone) {
+          this.activeInsideIds.add(tim.id);
+        } else if (this.activeInsideIds.has(tim.id) && !headingOk) {
+          this.activeInsideIds.delete(tim.id);
+        }
+
         if (isSeedPass) {
           // Already inside the buffer the moment monitoring started — mark it
           // seen without alerting, don't treat "was already true" as an approach.
           this.alertedIds.add(tim.id);
-        } else if (!this.alertedIds.has(tim.id)) {
-          const shouldAlert =
-            heading === null || this.isHeadingTowardZone(latitude, longitude, tim, heading);
-          if (shouldAlert) {
-            this.alertedIds.add(tim.id);
-            this.triggerAlert(tim);
+        } else if (!this.alertedIds.has(tim.id) && headingOk) {
+          this.alertedIds.add(tim.id);
+          this.triggerAlert(tim);
+        }
+
+        const isInside = this.activeInsideIds.has(tim.id);
+        if ((headingOk || isInside) && distMi != null) {
+          const current = newNearby[tim.category];
+          // Prefer an inside zone over a merely-approaching one — "you're in
+          // it" always outranks a further-off approach for the same category.
+          if (!current || (isInside && !current.inside) || (isInside === current.inside && distMi < current.distanceMi)) {
+            newNearby[tim.category] = { timId: tim.id, timType: tim.tim_type, distanceMi: distMi, inside: isInside };
           }
         }
       } else {
-        // Left the buffer — allow this zone to alert again on a future approach.
+        // Left the buffer entirely — unconditional exit regardless of heading.
         this.alertedIds.delete(tim.id);
+        this.activeInsideIds.delete(tim.id);
       }
     }
 
     this.timDistances = newDistances;
+    this.nearbyByCategory = newNearby;
   }
 
   private async fetchActiveTims(): Promise<void> {

@@ -50,7 +50,13 @@ export const API_CONFIG = {
   // this LAN address is used even in FIELD_MODE until one is confirmed.
   DASHBOARD_API_URL: 'http://10.199.1.41:3001',
 
-  // Already a public hostname — reachable over cellular in both modes.
-  PREEMPTION_API_URL: 'http://roadaware.cuip.research.utc.edu/preemptapi',
+  // LOCAL DOCKER (dev testing): 10.0.2.2 only resolves inside the Android
+  // emulator — a physical device needs the host machine's actual LAN IP,
+  // same as SPAT_WS_URL/SDSM_WS_URL above.
+  // PREEMPTION_API_URL: 'http://10.0.2.2:8001', // emulator only
+  // PREEMPTION_API_URL: 'http://10.129.244.3:8001', //physical device only
+  // PRODUCTION VM (roadaware, over CUIP network):
+  // PREEMPTION_API_URL: 'http://roadaware.cuip.research.utc.edu/preemptapi',
+  PREEMPTION_API_URL: 'http://10.129.244.3:8001',
   PREEMPTION_HOST: 'roadaware.cuip.research.utc.edu',
 };

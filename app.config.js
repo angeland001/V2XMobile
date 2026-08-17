@@ -1,6 +1,6 @@
 module.exports = {
   expo: {
-    name: 'V2X Mobile',
+    name: 'V2X Connect',
     slug: 'v2xmobile',
     scheme: 'v2xmobile',
     plugins: [

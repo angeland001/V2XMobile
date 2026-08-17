@@ -142,6 +142,11 @@ export class RouteViewModel {
   // entered yet — drives the persistent (non-dismissing) nav alert UI.
   approachingTimZones: TimHit[] = [];
   approachingTimZoneDistancesM: Map<number, number> = new Map();
+  // Zones the user is currently driving through, or has just exited but not
+  // yet passed (route position still behind the zone's entry point) — see
+  // _insideZoneIds below. Kept separate from approachingTimZones, which is
+  // specifically the "not there yet" list.
+  insideTimZones: TimHit[] = [];
   // Where each hit's entry point falls along the route, as a 0–1 fraction of
   // total route length — drives the mile-marker strip on RoutePreviewSheet.
   // Keyed the same as the hit arrays above (timId / zoneId); a hit missing
@@ -162,6 +167,11 @@ export class RouteViewModel {
   // edge, which has no notion of direction of travel and can read as closest
   // on the far/exit side of an irregular zone.
   private _timEntryRouteLocationM: Map<number, number> = new Map();
+  // Zones currently (or still lingering as) inside — the route-following
+  // analog of TimService's activeInsideIds. No device heading is tracked
+  // here, so "heading away" is approximated as "route position has passed
+  // the zone's entry point" instead.
+  private _insideZoneIds: Set<number> = new Set();
 
   constructor(private timService: TimService) {
     makeAutoObservable(this);
@@ -325,11 +335,13 @@ export class RouteViewModel {
     this.isOverviewMode = false;
     this._announcedKeys.clear();
     this._alertedTimIds.clear();
+    this._insideZoneIds.clear();
     // V2X
     this.timHits = [];
     this.preemptionHits = [];
     this.approachingTimZones = [];
     this.approachingTimZoneDistancesM = new Map();
+    this.insideTimZones = [];
     this.timHitRoutePositions = new Map();
     this.preemptionHitRoutePositions = new Map();
   }
@@ -343,6 +355,7 @@ export class RouteViewModel {
 
     this._announcedKeys.clear();
     this._alertedTimIds.clear();
+    this._insideZoneIds.clear();
 
     runInAction(() => {
       this.selectedRouteIndex = index;
@@ -350,6 +363,7 @@ export class RouteViewModel {
       this.hasArrived = false;
       this.approachingTimZones = [];
       this.approachingTimZoneDistancesM = new Map();
+      this.insideTimZones = [];
     });
 
     this.analyzeTimIntersections();
@@ -582,6 +596,7 @@ export class RouteViewModel {
 
       this._announcedKeys.clear();
       this._alertedTimIds.clear();
+      this._insideZoneIds.clear();
 
       runInAction(() => {
         this.routeOptions = options;
@@ -593,6 +608,7 @@ export class RouteViewModel {
         this.isOverviewMode = false;
         this.approachingTimZones = [];
         this.approachingTimZoneDistancesM = new Map();
+        this.insideTimZones = [];
       });
 
       this.analyzeTimIntersections();
@@ -782,6 +798,7 @@ export class RouteViewModel {
   private checkTimZoneAlerts(userPt: Feature<Point>): void {
     const approaching: TimHit[] = [];
     const distances = new Map<number, number>();
+    const insideNow: TimHit[] = [];
 
     if (this.routeCoordinates.length < 2) return;
     const routeLine: Feature<LineString> = lineString(this.routeCoordinates);
@@ -792,9 +809,26 @@ export class RouteViewModel {
         const poly = polygon(hit.geometry.coordinates);
         const inside = booleanPointInPolygon(userPt, poly);
 
+        // Route-following analog of TimService's "left the zone AND heading
+        // away" dismiss rule: no device heading is available here, so once
+        // inside, keep treating the zone as active until the user's route
+        // position has actually passed its entry point (i.e. they've driven
+        // past/through it), not merely the instant they exit the polygon.
+        const entryLocationM = this._timEntryRouteLocationM.get(hit.timId);
+        if (inside) {
+          this._insideZoneIds.add(hit.timId);
+          insideNow.push(hit);
+        } else if (this._insideZoneIds.has(hit.timId)) {
+          const hasPassed = entryLocationM == null || userRouteLocationM > entryLocationM;
+          if (hasPassed) {
+            this._insideZoneIds.delete(hit.timId);
+          } else {
+            insideNow.push(hit);
+          }
+        }
+
         let distanceAheadM: number | null = null;
         if (!inside) {
-          const entryLocationM = this._timEntryRouteLocationM.get(hit.timId);
           if (entryLocationM == null) continue; // route never crosses into this zone from outside
           distanceAheadM = entryLocationM - userRouteLocationM;
           if (distanceAheadM < 0 || distanceAheadM > TIM_ALERT_LOOKAHEAD_M) continue;
@@ -816,6 +850,7 @@ export class RouteViewModel {
     runInAction(() => {
       this.approachingTimZones = approaching;
       this.approachingTimZoneDistancesM = distances;
+      this.insideTimZones = insideNow;
     });
   }
 
