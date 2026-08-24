@@ -1,12 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, Pressable, useWindowDimensions, useColorScheme } from 'react-native';
+import { View, Text, StyleSheet, Pressable, useWindowDimensions } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
   withSpring,
-  runOnJS,
-  Easing,
 } from 'react-native-reanimated';
 import { observer } from 'mobx-react-lite';
 import { Ionicons } from '@expo/vector-icons';
@@ -18,9 +16,9 @@ import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
 
 type TimCategory = 'safety' | 'regulatory' | 'informational';
 
-// The banner itself is neutral (white/dark, tracks the app's color scheme) —
-// category is now signaled only through the icon and its tinted badge, not
-// the whole card. Card colors below are the icon accent only.
+// The banner itself is neutral (always light, see NEUTRAL below) — category
+// is signaled only through the icon and its tinted badge, not the whole
+// card. Card colors below are the icon accent only.
 const CATEGORY_STYLE: Record<TimCategory, {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
@@ -31,23 +29,17 @@ const CATEGORY_STYLE: Record<TimCategory, {
   informational: { icon: 'information-circle',  label: 'Info',        accent: '#2563EB' },
 };
 
-// Neutral banner chrome per color scheme — background, border, and text all
-// come from here so the card itself carries no category color.
-const THEME = {
-  light: {
-    bg: '#FFFFFF',
-    border: '#E5E7EB',
-    text: '#1A1A2E',
-    textSecondary: '#6B7280',
-    shadow: 'rgba(0,0,0,0.2)',
-  },
-  dark: {
-    bg: '#1E2030',
-    border: '#3A3D52',
-    text: '#F5F6FA',
-    textSecondary: '#A1A6BE',
-    shadow: 'rgba(0,0,0,0.5)',
-  },
+// Neutral banner chrome — background, border, and text all come from here so
+// the card itself carries no category color. Always light: the rest of the
+// Route/nav UI (RoutePreviewSheet, NavigationSummaryBar, etc.) never follows
+// system dark mode either, so a dark card here read as inconsistent whenever
+// the device/car display happened to be in dark mode.
+const NEUTRAL = {
+  bg: '#FFFFFF',
+  border: '#E5E7EB',
+  text: '#1A1A2E',
+  textSecondary: '#6B7280',
+  shadow: 'rgba(0,0,0,0.2)',
 } as const;
 
 interface DisplayItem {
@@ -55,7 +47,12 @@ interface DisplayItem {
   category: TimCategory;
   message: string;
   distanceM: number | null;
-  persistent: boolean; // true = stays until condition clears; false = auto-dismiss
+  // Every card is persistent now (stays until tapped, or until the source
+  // condition clears it — see the zone-entry effect below for the ambient
+  // toast) — this is how the card itself clears itself, wired per-source
+  // since route-mode zones and the ambient toast queue track dismissal
+  // differently (local Set vs TimService.toastQueue).
+  onDismiss: () => void;
 }
 
 function formatDistanceMeters(m: number): string {
@@ -67,18 +64,7 @@ function formatDistanceMeters(m: number): string {
 
 interface TimAlertCardProps {
   item: DisplayItem;
-  onAutoDismiss?: () => void;
-  onDismiss?: () => void;
   isTablet?: boolean;
-}
-
-// Ephemeral (ambient) cards read time scales with message length so a longer
-// description isn't cut off mid-read; clamped to a sane min/max either way.
-const MIN_AUTO_DISMISS_MS = 2200;
-const MAX_AUTO_DISMISS_MS = 6000;
-const MS_PER_CHAR = 60;
-function computeAutoDismissMs(messageLength: number): number {
-  return Math.min(MAX_AUTO_DISMISS_MS, Math.max(MIN_AUTO_DISMISS_MS, messageLength * MS_PER_CHAR));
 }
 
 // Safety zones this close get a heavier border instead of the flat
@@ -88,9 +74,7 @@ const URGENT_DISTANCE_M = 150;
 // Card enters/exits from off the left edge of the screen (container is left-anchored).
 const OFFSCREEN_X = -320;
 
-const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDismiss, isTablet = false }) => {
-  const scheme = useColorScheme();
-  const neutral = scheme === 'dark' ? THEME.dark : THEME.light;
+const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, isTablet = false }) => {
   const translateX = useSharedValue(OFFSCREEN_X);
   const opacity = useSharedValue(0);
 
@@ -108,16 +92,6 @@ const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDism
     opacity.value = 0;
     translateX.value = withSpring(0, { damping: 16, stiffness: 140 });
     opacity.value = withTiming(1, { duration: 200 });
-
-    if (!item.persistent && onAutoDismiss) {
-      const timer = setTimeout(() => {
-        translateX.value = withTiming(OFFSCREEN_X, { duration: 280, easing: Easing.in(Easing.cubic) });
-        opacity.value = withTiming(0, { duration: 280 }, (finished) => {
-          if (finished) runOnJS(onAutoDismiss)();
-        });
-      }, computeAutoDismissMs(item.message.length));
-      return () => clearTimeout(timer);
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.key]);
 
@@ -130,21 +104,21 @@ const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, onAutoDismiss, onDism
 
   return (
     <Animated.View style={animatedStyle}>
-      <Pressable onPress={onDismiss} disabled={!onDismiss}>
-        <View style={[styles.alert, { backgroundColor: neutral.bg, borderColor: neutral.border, borderWidth: isUrgent ? 3 : 1 }]}>
+      <Pressable onPress={item.onDismiss}>
+        <View style={[styles.alert, { backgroundColor: NEUTRAL.bg, borderColor: NEUTRAL.border, borderWidth: isUrgent ? 3 : 1 }]}>
           <View style={[styles.iconWrap, isTablet && styles.iconWrapTablet, { backgroundColor: `${cfg.accent}26` }]}>
             <Ionicons name={cfg.icon} size={isTablet ? 19 : 15} color={cfg.accent} />
           </View>
           <View style={styles.textWrap}>
             <View style={styles.titleRow}>
-              <Text style={[styles.title, isTablet && styles.titleTablet, { color: neutral.text, textShadowColor: neutral.shadow }]}>
+              <Text style={[styles.title, isTablet && styles.titleTablet, { color: NEUTRAL.text, textShadowColor: NEUTRAL.shadow }]}>
                 {cfg.label.toUpperCase()}
               </Text>
               {item.distanceM != null && (
-                <Text style={[styles.distance, isTablet && styles.distanceTablet, { color: neutral.textSecondary, textShadowColor: neutral.shadow }]}>{formatDistanceMeters(item.distanceM)} ahead</Text>
+                <Text style={[styles.distance, isTablet && styles.distanceTablet, { color: NEUTRAL.textSecondary, textShadowColor: NEUTRAL.shadow }]}>{formatDistanceMeters(item.distanceM)} ahead</Text>
               )}
             </View>
-            <Text style={[styles.description, isTablet && styles.descriptionTablet, { color: neutral.text, textShadowColor: neutral.shadow }]} numberOfLines={2}>{item.message}</Text>
+            <Text style={[styles.description, isTablet && styles.descriptionTablet, { color: NEUTRAL.text, textShadowColor: NEUTRAL.shadow }]} numberOfLines={2}>{item.message}</Text>
           </View>
         </View>
       </Pressable>
@@ -196,13 +170,31 @@ export const TimToast: React.FC<TimToastProps> = observer(
       (category === 'regulatory' && settingsViewModel.regulatoryAlerts) ||
       (category === 'informational' && settingsViewModel.informationalAlerts);
 
-    // Ambient toast (not navigating): ephemeral, drains TimService.toastQueue.
+    // Ambient toast (not navigating): drains TimService.toastQueue. Persists
+    // until tapped (see TimAlertCard) or until either effect below clears it.
     const ambientToast = !isNavigating ? timService.toastQueue[0] ?? null : null;
 
     useEffect(() => {
       if (!ambientToast) return;
       if (!categoryEnabled(ambientToast.category)) timService.dismissToast(ambientToast.id);
     }, [ambientToast?.id, settingsViewModel.safetyAlerts, settingsViewModel.regulatoryAlerts, settingsViewModel.informationalAlerts]);
+
+    // Clears the toast once the user actually enters the zone it's warning
+    // about — at that point it's telling them about where they already are,
+    // not what's ahead. nearbyByCategory[category].inside is the same signal
+    // TimService itself uses to track "inside", checked against the toast's
+    // own zone so entering an unrelated same-category zone doesn't clear it.
+    useEffect(() => {
+      if (!ambientToast) return;
+      const nearby = timService.nearbyByCategory[ambientToast.category];
+      if (nearby?.inside && nearby.timId === ambientToast.timId) {
+        timService.dismissToast(ambientToast.id);
+      }
+    }, [ambientToast?.id, timService.nearbyByCategory]);
+
+    const dismiss = (key: string): void => {
+      setDismissedKeys((prev) => new Set(prev).add(key));
+    };
 
     let rawItems: DisplayItem[];
     if (isNavigating) {
@@ -212,15 +204,18 @@ export const TimToast: React.FC<TimToastProps> = observer(
         .sort((a, b) => (routeViewModel.approachingTimZoneDistancesM.get(a.timId) ?? Infinity) -
                         (routeViewModel.approachingTimZoneDistancesM.get(b.timId) ?? Infinity))
         .slice(0, MAX_VISIBLE)
-        .map((hit) => ({
-          key: `route-${hit.timId}`,
-          category: hit.category,
-          // `??` only catches null/undefined — the API can send an empty
-          // string too, which would otherwise render as blank text.
-          message: hit.description || `${hit.timType} ahead`,
-          distanceM: routeViewModel.approachingTimZoneDistancesM.get(hit.timId) ?? null,
-          persistent: true,
-        }));
+        .map((hit) => {
+          const key = `route-${hit.timId}`;
+          return {
+            key,
+            category: hit.category,
+            // `??` only catches null/undefined — the API can send an empty
+            // string too, which would otherwise render as blank text.
+            message: hit.description || `${hit.timType} ahead`,
+            distanceM: routeViewModel.approachingTimZoneDistancesM.get(hit.timId) ?? null,
+            onDismiss: () => dismiss(key),
+          };
+        });
     } else if (ambientToast && categoryEnabled(ambientToast.category)) {
       const distanceMi = timService.timDistances.get(ambientToast.timId);
       rawItems = [{
@@ -228,7 +223,7 @@ export const TimToast: React.FC<TimToastProps> = observer(
         category: ambientToast.category,
         message: ambientToast.message,
         distanceM: distanceMi != null ? distanceMi * 1609.34 : null,
-        persistent: false,
+        onDismiss: () => timService.dismissToast(ambientToast.id),
       }];
     } else {
       rawItems = [];
@@ -248,10 +243,6 @@ export const TimToast: React.FC<TimToastProps> = observer(
     const items = rawItems.filter((item) => !dismissedKeys.has(item.key));
 
     if (items.length === 0) return null;
-
-    const dismiss = (key: string): void => {
-      setDismissedKeys((prev) => new Set(prev).add(key));
-    };
 
     const baseTop = isNavigating
       ? routeViewModel.navBannerHeightPx + NAV_BANNER_GAP
@@ -289,21 +280,17 @@ export const TimToast: React.FC<TimToastProps> = observer(
         pointerEvents="box-none"
       >
         {items.map((item) => (
-          <TimAlertCard
-            key={item.key}
-            item={item}
-            onAutoDismiss={!item.persistent ? () => timService.dismissToast(item.key) : undefined}
-            onDismiss={() => (item.persistent ? dismiss(item.key) : timService.dismissToast(item.key))}
-            isTablet={isTablet}
-          />
+          <TimAlertCard key={item.key} item={item} isTablet={isTablet} />
         ))}
       </View>
     );
   },
 );
 
-// textShadowColor is supplied per-item (see `neutral.shadow`) since it must
-// track the active color scheme to stay legible.
+// textShadowColor is supplied per-item (see `NEUTRAL.shadow`) rather than
+// folded into TEXT_SHADOW below, since these Text styles are built from
+// several spread objects and this keeps the color grouped with the other
+// NEUTRAL.* values above instead of split across two places.
 const TEXT_SHADOW = {
   textShadowOffset: { width: 0, height: 1 },
   textShadowRadius: 2,

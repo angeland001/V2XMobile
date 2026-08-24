@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, useWindowDimensions } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, useWindowDimensions } from 'react-native';
 import MapboxGL from '@rnmapbox/maps';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
@@ -63,14 +63,18 @@ const RouteTimZonesLayer: React.FC<{ hits: TimHit[] }> = ({ hits }) => (
             <MapboxGL.FillLayer id={`preview-tim-fill-${hit.timId}`} aboveLayerID={ZONE_ABOVE_LAYER_ID} style={{ fillColor: style.dimColor }} />
             <MapboxGL.LineLayer id={`preview-tim-line-${hit.timId}`} aboveLayerID={`preview-tim-fill-${hit.timId}`} style={{ lineColor: style.color, lineWidth: 2.5 }} />
           </MapboxGL.ShapeSource>
-          {/* Same category badge (icon + Safety/Regulatory/Info label) as
-              MapView.tsx's TIMLayer, so a zone reads identically whether
-              you're previewing the route or already navigating it. */}
-          <MapboxGL.MarkerView coordinate={centroid} allowOverlap={true}>
-            <View style={[timMarkerStyles.badge, { borderColor: style.color }]}>
-              <Ionicons name={style.icon} size={14} color={style.color} />
-              <Text style={[timMarkerStyles.label, { color: style.color }]}>{style.label}</Text>
-            </View>
+          {/* Icon-only pin, no category label — the labeled pill version was
+              wide enough to sit right on top of the user location dot, and
+              the full detail (category, description, severity...) already
+              lives in RoutePreviewSheet's scrollable zone list below. */}
+          <MapboxGL.MarkerView
+            coordinate={centroid}
+            anchor={{ x: 0.5, y: MARKER_PIN_TIP_ANCHOR }}
+            allowOverlap={true}
+          >
+            <MarkerPin size={30} iconSize={14} color={style.color}>
+              <Ionicons name={style.icon} size={14} color="#FFFFFF" />
+            </MarkerPin>
           </MapboxGL.MarkerView>
         </React.Fragment>
       );
@@ -196,23 +200,6 @@ const DestinationFlag: React.FC<{ routeVM: RouteViewModel }> = observer(({ route
   );
 });
 
-const timMarkerStyles = StyleSheet.create({
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: ROUTE_COLORS.panel,
-    borderRadius: 12,
-    paddingVertical: 3,
-    paddingHorizontal: 7,
-    borderWidth: 1.5,
-  },
-  label: {
-    fontFamily: ROUTE_FONTS.bodySemiBold,
-    fontSize: 10,
-  },
-});
-
 const destStyles = StyleSheet.create({
   container: { alignItems: 'center' },
   label: {
@@ -303,6 +290,22 @@ export const RoutePreviewMapScreen: React.FC<RoutePreviewMapScreenProps> = obser
     // prop change (undefined → bounds) fired only once the map can act on it.
     const [mapReady, setMapReady] = useState(false);
 
+    // Imperative handle for the recenter button below — the declarative
+    // `bounds` prop above only re-fits when its own memoized value changes
+    // (a route/selection change), not when the user has simply panned or
+    // zoomed away on their own, so getting back to the full route needs a
+    // fresh fitBounds call rather than relying on that prop.
+    const cameraRef = useRef<MapboxGL.Camera>(null);
+    const recenterToRoute = () => {
+      if (!bounds) return;
+      cameraRef.current?.fitBounds(
+        bounds.ne,
+        bounds.sw,
+        [bounds.paddingTop, bounds.paddingRight, bounds.paddingBottom, bounds.paddingLeft],
+        600,
+      );
+    };
+
     return (
       <View style={styles.container}>
         <MapboxGL.MapView
@@ -312,8 +315,13 @@ export const RoutePreviewMapScreen: React.FC<RoutePreviewMapScreenProps> = obser
           logoEnabled={false}
           attributionEnabled={false}
           onDidFinishLoadingMap={() => setMapReady(true)}
+          // Without this, a real two-finger rotate (which almost always has
+          // a little pinch motion mixed in) can get claimed by the pinch-zoom
+          // gesture recognizer instead of the rotate one — see MapView.tsx.
+          gestureSettings={{ simultaneousRotateAndPinchZoomEnabled: true }}
         >
           <MapboxGL.Camera
+            ref={cameraRef}
             bounds={mapReady ? bounds : undefined}
             defaultSettings={{ centerCoordinate: routeVM.toCoord ?? [-85.3075, 35.0454], zoomLevel: 12 }}
             animationDuration={mapReady ? 300 : 0}
@@ -325,6 +333,20 @@ export const RoutePreviewMapScreen: React.FC<RoutePreviewMapScreenProps> = obser
           <RoutePreemptionZonesLayer hits={routeVM.preemptionHits} />
           <DestinationFlag routeVM={routeVM} />
         </MapboxGL.MapView>
+
+        {/* Same icon-chip treatment as the overview toggle next to the voice
+            button in NavigationSummaryBar — here it's a one-shot "snap back
+            to the full route" action rather than a toggle, since this screen
+            has no turn-by-turn follow mode to toggle away from. */}
+        <TouchableOpacity
+          style={[styles.overviewBtn, { bottom: sheetHeight + SHEET_PADDING_MARGIN }]}
+          onPress={recenterToRoute}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Show full route"
+        >
+          <Ionicons name="locate-outline" size={18} color={ROUTE_COLORS.ink} />
+        </TouchableOpacity>
 
         <RoutePreviewSheet
           routeViewModel={routeVM}
@@ -338,6 +360,24 @@ export const RoutePreviewMapScreen: React.FC<RoutePreviewMapScreenProps> = obser
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
+  overviewBtn: {
+    position: 'absolute',
+    right: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2000,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+  },
 });
 
 export default RoutePreviewMapScreen;

@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class CarBridgePackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(CarBridgeModule(reactContext))
+        return listOf(CarBridgeModule(reactContext), VoiceGuidanceModule(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

@@ -71,7 +71,16 @@ export interface RouteOption {
 }
 
 const CHATT_PROXIMITY = '-85.3099,35.0456';
-const OFF_ROUTE_THRESHOLD_M = 30;
+// 30m was tripping on ordinary GPS drift (multi-lane roads, bridges, urban
+// canyon) well before the driver had actually left the route — each false
+// trigger refetches the whole route from the current position, which
+// recomputes TIM zone entry points against new geometry and made the
+// "distance ahead" jump to an unrelated number (see OFF_ROUTE_CONFIRM_MS).
+const OFF_ROUTE_THRESHOLD_M = 50;
+// A single noisy sample past the threshold shouldn't reroute — require the
+// deviation to still be past it after this long (see offRouteSinceMs below)
+// so a momentary GPS blip doesn't tear down a still-valid route.
+const OFF_ROUTE_CONFIRM_MS = 1_500;
 const REROUTE_DEBOUNCE_MS = 2_500;
 const OFF_ROUTE_CHECK_INTERVAL_MS = 200;
 const TIM_ALERT_LOOKAHEAD_M = 500;
@@ -159,6 +168,9 @@ export class RouteViewModel {
   // ── Internal (non-observable) ─────────────────────────────────────────────
   private lastRerouteTime: number = 0;
   private lastOffRouteCheck: number = 0;
+  // Timestamp the driver first read past OFF_ROUTE_THRESHOLD_M on this
+  // excursion, or null while inside it — see checkOffRoute's hysteresis.
+  private offRouteSinceMs: number | null = null;
   private _announcedKeys: Set<string> = new Set();
   private _alertedTimIds: Set<number> = new Set();
   // Distance (meters, from route start) at which each TIM hit's zone boundary
@@ -324,6 +336,7 @@ export class RouteViewModel {
     this.isNavigating = false;
     this.isRerouting = false;
     this.lastRerouteTime = 0;
+    this.offRouteSinceMs = null;
     // Step navigation
     this.steps = [];
     this.currentStepIndex = 0;
@@ -530,7 +543,21 @@ export class RouteViewModel {
       const snapped = nearestPointOnLine(routeLine, userPt, { units: 'meters' });
       const dist = snapped.properties.dist ?? Infinity;
 
-      if (dist > OFF_ROUTE_THRESHOLD_M && this.toCoord) {
+      if (dist <= OFF_ROUTE_THRESHOLD_M) {
+        this.offRouteSinceMs = null;
+        return;
+      }
+
+      // Still within OFF_ROUTE_CONFIRM_MS of first reading past the
+      // threshold — could just be GPS jitter, wait for it to persist.
+      if (this.offRouteSinceMs == null) {
+        this.offRouteSinceMs = now;
+        return;
+      }
+      if (now - this.offRouteSinceMs < OFF_ROUTE_CONFIRM_MS) return;
+
+      if (this.toCoord) {
+        this.offRouteSinceMs = null;
         this.lastRerouteTime = Date.now();
         this.announce('Recalculating route');
         runInAction(() => { this.isRerouting = true; });
@@ -708,20 +735,58 @@ export class RouteViewModel {
           if (ring.length < 4) continue;
           const zonePoly = polygon([ring]);
           if (!booleanIntersects(routeLine, zonePoly)) continue;
+
+          // Earliest point (meters along the route) where routeLine crosses
+          // a given line — used below for both the entry/exit boundaries and
+          // the polygon-only fallback.
+          const earliestCrossingM = (crossings: ReturnType<typeof lineIntersect>): number => {
+            let best = Infinity;
+            for (const crossing of crossings.features) {
+              const loc = nearestPointOnLine(routeLine, crossing, { units: 'meters' }).properties.location;
+              if (loc != null && loc < best) best = loc;
+            }
+            return best;
+          };
+
+          // A route can cross both a preemption zone's entry AND exit lines
+          // while still travelling through it backwards relative to the
+          // zone's intended direction (confirmed against real zone data —
+          // e.g. a route that approaches from the far side crosses the exit
+          // line, then later crosses the entry line, satisfying a naive
+          // "did it cross the entry line at all" check while actually
+          // entering through the exit). So it's not enough that the entry
+          // line gets crossed — it must be crossed BEFORE the exit line
+          // along the route's own direction of travel. entryLine/exitLine
+          // are stored [lat, lng] (SpatZoneService's app-movement-tracking
+          // convention — see its toLatLng); flip back to [lng, lat] to
+          // intersect against routeLine with turf. Zones missing this data
+          // fall back to the old polygon-only check rather than being
+          // silently dropped.
+          const hasEntry = !!zone.entryLine && zone.entryLine.length === 2;
+          const hasExit = !!zone.exitLine && zone.exitLine.length === 2;
+          const entryLocationM = hasEntry
+            ? earliestCrossingM(lineIntersect(routeLine, lineString(zone.entryLine!.map(([lat, lng]) => [lng, lat]))))
+            : Infinity;
+          const exitLocationM = hasExit
+            ? earliestCrossingM(lineIntersect(routeLine, lineString(zone.exitLine!.map(([lat, lng]) => [lng, lat]))))
+            : Infinity;
+
+          if (hasEntry && !isFinite(entryLocationM)) continue; // never crosses the entrance at all
+          if (hasEntry && hasExit && isFinite(exitLocationM) && exitLocationM <= entryLocationM) continue; // exit reached first — backwards through the zone
+
           hits.push({ zoneId: zone.id, zoneName: zone.name, polygon: zone.polygon });
 
           // Same "where does the route first cross this zone" measurement
           // analyzeTimIntersections uses, expressed as a 0–1 fraction of the
           // route for the strip rather than raw meters (that's only needed
-          // for the alert-lookahead math TIM zones use).
-          const crossings = lineIntersect(routeLine, zonePoly);
-          let entryLocationM = Infinity;
-          for (const crossing of crossings.features) {
-            const loc = nearestPointOnLine(routeLine, crossing, { units: 'meters' }).properties.location;
-            if (loc != null && loc < entryLocationM) entryLocationM = loc;
-          }
-          if (isFinite(entryLocationM) && routeLengthM > 0) {
-            positions.set(zone.id, Math.min(1, Math.max(0, entryLocationM / routeLengthM)));
+          // for the alert-lookahead math TIM zones use). Prefer the entry-line
+          // crossing itself — the real "entering here" point — over the first
+          // polygon-boundary crossing in general, which can land on the exit side.
+          const finalEntryLocationM = isFinite(entryLocationM)
+            ? entryLocationM
+            : earliestCrossingM(lineIntersect(routeLine, zonePoly));
+          if (isFinite(finalEntryLocationM) && routeLengthM > 0) {
+            positions.set(zone.id, Math.min(1, Math.max(0, finalEntryLocationM / routeLengthM)));
           }
         } catch {
           // Skip malformed zone

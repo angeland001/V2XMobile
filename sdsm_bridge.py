@@ -5,7 +5,7 @@ Connects to CUIP data (requires VPN/network access from this machine) and
 re-serves the stream as a local WebSocket so the Android emulator can reach it.
 
 Two source modes (set SOURCE below):
-  "websocket" - direct WebSocket to cuip-api.research.utc.edu:8090
+  "websocket" - direct WebSocket to CUIP_WS_URL (see below)
   "redis"     - Redis pub/sub (lower latency, needs redis-py + credentials)
 
 Usage:
@@ -19,14 +19,31 @@ Physical device  → ws://<your-LAN-IP>:8091
 
 import asyncio
 import json
+import os
+import shutil
 import websockets
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SOURCE = "websocket"           # "websocket" | "redis"
 
-# WebSocket source
-CUIP_WS_URL = "ws://cuip-api.research.utc.edu:8090"
+# adb reverse tcp:8091 tcp:8091 lets a USB-connected physical device reach this
+# bridge via ws://localhost:8091, bypassing VPN/LAN routing issues (GlobalProtect
+# blocks direct LAN access to the phone while connected). The mapping silently
+# drops on any USB re-enumeration (cable wiggle, phone sleep, adb server restart),
+# so this is reapplied periodically instead of once at startup.
+ADB_REVERSE_ENABLED = True
+ADB_REVERSE_PORT = 8091
+ADB_REVERSE_INTERVAL_S = 5
+ADB_PATH = (
+    shutil.which("adb")
+    or os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk\platform-tools\adb.exe")
+)
+
+# WebSocket source — roadaware's direct sdsm-events relay (final confirmed
+# URL, wss:// / TLS). Pre-demo-day test path: run this over VPN, same as
+# before, just against the new host/path instead of cuip-api.research.utc.edu:8090.
+CUIP_WS_URL = "wss://roadaware.cuip.research.utc.edu/ws/sdsm-events"
 
 # Redis source (only used when SOURCE="redis")
 REDIS_HOST = "roadaware.cuip.research.utc.edu"
@@ -113,6 +130,36 @@ async def redis_reader(queue: asyncio.Queue):
             await asyncio.sleep(3)
 
 
+# ── adb reverse keeper (physical device over USB) ─────────────────────────────
+
+async def adb_reverse_loop():
+    if not ADB_REVERSE_ENABLED:
+        return
+    if not ADB_PATH or not os.path.exists(ADB_PATH):
+        print(f"[Bridge] adb not found (looked at: {ADB_PATH}). Skipping adb reverse keeper.")
+        return
+
+    was_up = False
+    while True:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ADB_PATH, "reverse", f"tcp:{ADB_REVERSE_PORT}", f"tcp:{ADB_REVERSE_PORT}",
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            up_now = proc.returncode == 0
+            if up_now and not was_up:
+                print(f"[Bridge] adb reverse tcp:{ADB_REVERSE_PORT} tcp:{ADB_REVERSE_PORT} — device attached")
+            elif not up_now and was_up:
+                print(f"[Bridge] adb reverse lost ({stderr.decode().strip()}). Will retry.")
+            was_up = up_now
+        except Exception as e:
+            if was_up:
+                print(f"[Bridge] adb reverse keeper error: {e}")
+            was_up = False
+        await asyncio.sleep(ADB_REVERSE_INTERVAL_S)
+
+
 # ── Queue → broadcast loop ────────────────────────────────────────────────────
 
 async def broadcast_loop(queue: asyncio.Queue):
@@ -148,6 +195,7 @@ async def main():
         server.wait_closed(),
         broadcast_loop(queue),
         reader(queue),
+        adb_reverse_loop(),
     )
 
 

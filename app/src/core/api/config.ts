@@ -1,62 +1,42 @@
-// Set EXPO_PUBLIC_FIELD_MODE=1 in your .env for testing on cellular data, off
-// the CUIP lab LAN (e.g. the physical corridor/vehicle test). Swaps every
-// LAN-only host below for its public/VPN-reachable equivalent. Endpoints
-// marked NEEDS CONFIRMATION are still guesses at a hostname pattern — verify
-// with whoever runs roadaware.cuip.research.utc.edu before relying on them
-// in the field; a wrong host fails silently (unreachable/timeout), not loudly.
-const FIELD_MODE = process.env.EXPO_PUBLIC_FIELD_MODE === '1';
-
-if (FIELD_MODE) {
-  console.warn(
-    '[API_CONFIG] FIELD_MODE is on: SPAT_WS_URL and DASHBOARD_API_URL/REDIS_MAP_ENDPOINT ' +
-      'are unconfirmed public hostnames (see config.ts). Confirm reachability before a field test.'
-  );
-}
-
 export const API_CONFIG = {
 
   // Set GOOGLE_MAPS_API_KEY in your .env file or environment
   GOOGLE_MAPS_API_KEY: process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || '',
 
-  SERVER_URL: 'http://10.129.244.3:5000',
-  API_URL: 'http://10.129.244.3:5000/api',
+  // Direct public relay — confirmed reachable on cellular data without VPN,
+  // same host sdsm_bridge.py's own CUIP_WS_URL now points at. No local-bridge
+  // fallback branch: sdsm_bridge.py + adb reverse is no longer needed to run
+  // the app at all, only if this relay itself ever goes down.
+  SDSM_WS_URL: 'wss://roadaware.cuip.research.utc.edu/ws/sdsm-events',
 
-  REDIS_API_URL: 'http://roadaware.cuip.research.utc.edu/cv2x',
-  REDIS_SDSM_ENDPOINT: 'http://roadaware.cuip.research.utc.edu/cv2x/latest/sdsm_events/MLK_Georgia',
-  // Bridge running on dev machine (emulator uses 10.0.2.2 to reach host).
-  // For a physical device on the same LAN replace with your machine's IP.
-  SDSM_WS_URL: FIELD_MODE
-    ? 'ws://cuip-api.research.utc.edu:8090'
-    : 'ws://10.129.244.3:8091',
-
-  // spat_bridge.py — relays CUIP's spat-events stream (all ~13 corridor
-  // intersections, not just Georgia/Houston). Same host-reachability notes as
-  // SDSM_WS_URL above.
-  // NEEDS CONFIRMATION: no known public/VPN host for spat_bridge.py yet —
-  // this LAN address is used even in FIELD_MODE until one is confirmed.
-  SPAT_WS_URL: 'ws://10.129.244.3:8092',
-  // Flip to false when the CUIP SDK/spat_bridge.py is down or unavailable, to
-  // stop SpatWebSocketService from attempting connections and spamming
-  // reconnect-error logs. The app degrades to "SPaT unavailable" everywhere.
-  SPAT_WS_ENABLED: true,
-
-  // NEEDS CONFIRMATION: no known public/VPN host for the MAP-events relay yet.
-  REDIS_MAP_ENDPOINT: 'http://10.199.1.11:9095/latest/map_events',
+  // Direct public relay for spat-events (all ~13 corridor intersections, not
+  // just Georgia/Houston) — bypasses spat_bridge.py entirely. Unused: SPaT
+  // isn't wired into this project (see SPAT_WS_ENABLED below).
+  SPAT_WS_URL: 'wss://roadaware.cuip.research.utc.edu/ws/spat-events',
+  // SPaT isn't used by this project — disabled to stop SpatWebSocketService
+  // from attempting connections at all and spamming "[SpatWS] Connection
+  // error" reconnect-loop logs. The app degrades to "SPaT unavailable"
+  // everywhere, which is fine since nothing reads it.
+  SPAT_WS_ENABLED: false,
 
   // Dashboard backend (SPaT zones authored in Kepler dashboard). Critical
   // path for preemption: zone/geofence configs come from here, so if this is
   // unreachable, preemption never triggers regardless of SPaT/SDSM status.
-  // NEEDS CONFIRMATION: no known public/VPN host for the dashboard API yet —
-  // this LAN address is used even in FIELD_MODE until one is confirmed.
-  DASHBOARD_API_URL: 'http://10.199.1.41:3001',
+  // Public host from the dashboard migration — reachable on data without
+  // VPN. No trailing slash — every call site appends `/api/...` directly
+  // onto this.
+  DASHBOARD_API_URL: 'https://roadaware.cuip.research.utc.edu/dashboard-api',
 
   // LOCAL DOCKER (dev testing): 10.0.2.2 only resolves inside the Android
   // emulator — a physical device needs the host machine's actual LAN IP,
   // same as SPAT_WS_URL/SDSM_WS_URL above.
   // PREEMPTION_API_URL: 'http://10.0.2.2:8001', // emulator only
-  // PREEMPTION_API_URL: 'http://10.129.244.3:8001', //physical device only
+  // PREEMPTION_API_URL: 'http://192.168.40.142:8001', //physical device only
   // PRODUCTION VM (roadaware, over CUIP network):
-  // PREEMPTION_API_URL: 'http://roadaware.cuip.research.utc.edu/preemptapi',
-  PREEMPTION_API_URL: 'http://10.129.244.3:8001',
+  // http:// silently gets 302'd to https:// server-side, and fetch downgrades
+  // a redirected POST to GET per spec — that turned every /preempt/start call
+  // into a GET, which the API correctly rejects with 405 Method Not Allowed.
+  // Pointing straight at https avoids the redirect (and the method loss).
+  PREEMPTION_API_URL: 'https://roadaware.cuip.research.utc.edu/preemptapi',
   PREEMPTION_HOST: 'roadaware.cuip.research.utc.edu',
 };

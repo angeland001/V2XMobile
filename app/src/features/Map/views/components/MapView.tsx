@@ -37,6 +37,7 @@ import { SignalState } from "../../../SpatService/models/SpatModels";
 import { closeRing, normalizeToLngLat, type LngLat } from "../../../../core/maps/coordinates";
 import { NavigationBanner } from "../../../Route/components/NavigationBanner";
 import { NavigationSummaryBar } from "../../../Route/components/NavigationSummaryBar";
+import { VoiceGuidanceService } from "../../../Route/services/VoiceGuidanceService";
 import { TAB_BAR_HEIGHT } from "../../../UI/theme";
 import { useStackedOffset } from "../../hooks/useStackedOffset";
 import { useResponsiveLayout } from "../../../UI/hooks/useResponsiveLayout";
@@ -213,21 +214,39 @@ const PedestrianWarning: React.FC<PedestrianWarningProps> = observer(
 interface SpatZoneLayerProps {
   zones: SpatZone[];
   activeSpatZoneId: string | null;
+  // Nearest other zone the user is currently within range of and heading
+  // toward (see SpatZoneService.findApproachingZone) — purely a display
+  // cue; does not feed preemption trigger logic. Lets a driver tell which
+  // of several overlapping zones near an intersection they're actually
+  // approaching, before they're inside any of them.
+  headingTowardZoneId: string | null;
   spatViewModel: SpatViewModel;
   displayMode: PreemptionZoneDisplayMode;
 }
 
-const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpatZoneId, spatViewModel, displayMode }) => {
-  if (displayMode === 'off') return null;
+// entryLine/exitLine coordinates come from the dashboard as [lat, lng] (see
+// SpatZoneService.toLatLng) while zone.polygon stays GeoJSON [lng, lat] —
+// normalizeToLngLat resolves the ambiguity by proximity to the known map
+// center, same as TIMLayer does for TIM geometry above.
+const entryLineAsLngLat = (zone: SpatZone): [LngLat, LngLat] | null => {
+  if (!zone.entryLine || zone.entryLine.length !== 2) return null;
+  return [normalizeToLngLat(zone.entryLine[0]), normalizeToLngLat(zone.entryLine[1])];
+};
 
-  return (
+const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(
+  ({ zones, activeSpatZoneId, headingTowardZoneId, spatViewModel, displayMode }) => {
+    if (displayMode === 'off') return null;
+
+    return (
     <>
       {zones.map((zone) => {
         const isActive = zone.id === activeSpatZoneId;
+        const isApproaching = !isActive && zone.id === headingTowardZoneId;
 
         let fillColor: string;
         let lineColor: string;
         let lineWidth: number;
+        let lineDasharray: number[] | undefined;
 
         if (isActive) {
           switch (spatViewModel.signalState) {
@@ -248,11 +267,25 @@ const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpa
               lineColor = '#FF8C00';
           }
           lineWidth = 2.5;
+        } else if (isApproaching) {
+          // Distinct from both "active" (solid, signal-colored) and "other
+          // nearby" (dimmed) below — amber + dashed reads as "not there yet,
+          // but this is the one you're headed for" at a glance, even when
+          // its polygon overlaps others.
+          fillColor = 'rgba(245, 158, 11, 0.18)';
+          lineColor = '#f59e0b';
+          lineWidth = 2.5;
+          lineDasharray = [2, 1.5];
         } else {
-          fillColor = 'rgba(59, 130, 246, 0.08)';
-          lineColor = 'rgba(59, 130, 246, 0.45)';
-          lineWidth = 1.5;
+          // Any other nearby zone that's neither active nor approaching —
+          // faded well below the two states above so it recedes visually
+          // instead of competing with them where zones overlap.
+          fillColor = 'rgba(59, 130, 246, 0.04)';
+          lineColor = 'rgba(59, 130, 246, 0.22)';
+          lineWidth = 1;
         }
+
+        const entryLine = (isActive || isApproaching) ? entryLineAsLngLat(zone) : null;
 
         if (displayMode === 'icon') {
           const centroid = lngLatCentroid(zone.polygon as LngLat[]);
@@ -281,16 +314,33 @@ const SpatZoneLayer: React.FC<SpatZoneLayerProps> = observer(({ zones, activeSpa
         };
 
         return (
-          <MapboxGL.ShapeSource key={`spat-source-${zone.id}`} id={`spat-source-${zone.id}`} shape={shape}>
-            <MapboxGL.FillLayer
-              id={`spat-fill-${zone.id}`}
-              style={{ fillColor }}
-            />
-            <MapboxGL.LineLayer
-              id={`spat-line-${zone.id}`}
-              style={{ lineColor, lineWidth }}
-            />
-          </MapboxGL.ShapeSource>
+          <React.Fragment key={`spat-${zone.id}`}>
+            <MapboxGL.ShapeSource id={`spat-source-${zone.id}`} shape={shape}>
+              <MapboxGL.FillLayer
+                id={`spat-fill-${zone.id}`}
+                style={{ fillColor }}
+              />
+              <MapboxGL.LineLayer
+                id={`spat-line-${zone.id}`}
+                style={lineDasharray ? { lineColor, lineWidth, lineDasharray } : { lineColor, lineWidth }}
+              />
+            </MapboxGL.ShapeSource>
+            {entryLine && (
+              <MapboxGL.ShapeSource
+                id={`spat-entry-source-${zone.id}`}
+                shape={{
+                  type: 'Feature',
+                  properties: {},
+                  geometry: { type: 'LineString', coordinates: entryLine },
+                }}
+              >
+                <MapboxGL.LineLayer
+                  id={`spat-entry-line-${zone.id}`}
+                  style={{ lineColor, lineWidth: lineWidth + 3, lineCap: 'round' }}
+                />
+              </MapboxGL.ShapeSource>
+            )}
+          </React.Fragment>
         );
       })}
     </>
@@ -459,6 +509,7 @@ interface MapViewProps {
   mainViewModel?: MainViewModel;
   spatViewModel?: SpatViewModel;
   lanesViewModel?: LanesViewModel;
+  preemptionViewModel?: PreemptionViewModel;
   children?: React.ReactNode;
 }
 
@@ -473,6 +524,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     mainViewModel,
     spatViewModel: providedSpatViewModel,
     lanesViewModel: providedLanesViewModel,
+    preemptionViewModel: providedPreemptionViewModel,
     children,
   }) => {
     const cameraRef = useRef<MapboxGL.Camera>(null);
@@ -484,14 +536,17 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     if (lanesViewModelRef.current === null) {
       lanesViewModelRef.current = new LanesViewModel();
     }
+    // Fallback only — MainScreen always provides MainViewModel's shared
+    // instance (see the comment on MainViewModel.preemptionViewModel for why
+    // that matters). This ref only exists for callers that don't.
     const preemptionViewModelRef = useRef<PreemptionViewModel | null>(null);
-    if (preemptionViewModelRef.current === null) {
+    if (!providedPreemptionViewModel && preemptionViewModelRef.current === null) {
       preemptionViewModelRef.current = new PreemptionViewModel();
     }
 
     const spatViewModel = providedSpatViewModel || spatViewModelRef.current;
     const lanesViewModel = providedLanesViewModel || lanesViewModelRef.current;
-    const preemptionViewModel = preemptionViewModelRef.current;
+    const preemptionViewModel = providedPreemptionViewModel || preemptionViewModelRef.current!;
 
     const [userPosition, setUserPosition] = useState<[number, number]>([
       mapViewModel.userLocation.latitude,
@@ -503,6 +558,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     ]);
     const [spatZones, setSpatZones] = useState<SpatZone[]>(() => SpatZoneService.getActiveZones());
     const [activeSpatZoneId, setActiveSpatZoneId] = useState<string | null>(null);
+    const [headingTowardZoneId, setHeadingTowardZoneId] = useState<string | null>(null);
 
     const [isDarkMode, setIsDarkMode] = useState(false);
     const [navBannerHeight, setNavBannerHeight] = useState(130);
@@ -579,11 +635,13 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     );
     // Left-docked spot also needs insets.top — same status-bar collision as
     // topRightBase above, since this is the toggle's default top-left position.
+    // Shares topRightBase (rather than its own offset) so it lines up with
+    // MapLegend across the screen, both floating at the same height.
     const preemptionTop = preemptionDockRight
       ? navTopRightStack.offsetFor('preemptionToggle', etaBannerTop)
       : isTablet
         ? leftStackCenterTop
-        : insets.top + 30;
+        : topRightBase;
     // On a wide car display, the toggle only leaves its left-docked spot
     // while navigating (preemptionDockRight above) — any other time on that
     // display it stays top-left, in the same column the preemption status
@@ -933,17 +991,73 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       );
     }, [mainViewModel]);
 
-    // Cleanup preemption view model on unmount
+    // Cleanup preemption view model on unmount — only when it's the local
+    // fallback instance this component created itself. The shared instance
+    // MainViewModel provides is owned there and must survive this
+    // component's own unmount/remount (route preview swaps MapViewComponent
+    // out and back in — see the comment on MainViewModel.preemptionViewModel).
     useEffect(() => {
+      if (providedPreemptionViewModel) return;
       return () => {
         preemptionViewModel.destroy();
       };
-    }, [preemptionViewModel]);
+    }, [preemptionViewModel, providedPreemptionViewModel]);
 
     // Keep preemption view model in sync with position and zones
     useEffect(() => {
       preemptionViewModel.syncPosition(userPosition, spatZones);
     }, [preemptionViewModel, userPosition, spatZones]);
+
+    // Spoken cue on grant and (once the controller confirms) clear — so a
+    // driver doesn't have to glance at PreemptionStatusBanner to know the
+    // signal state changed. Uses mobx reaction (not a plain useEffect dep
+    // array) for the same reason the isNavigating/hasArrived reactions above
+    // do: this component reads these observables outside of JSX, where
+    // React's own change detection wouldn't otherwise re-fire the effect.
+    useEffect(() => {
+      return reaction(
+        () => preemptionViewModel.ssmStatus,
+        (status) => {
+          if (!(mainViewModel?.settingsViewModel?.preemptionVoiceAlerts ?? true)) return;
+          if (status === 'granted') {
+            VoiceGuidanceService.announce('Preemption granted');
+          }
+        },
+      );
+    }, [preemptionViewModel, mainViewModel]);
+
+    // Separate reaction for the clear confirmation itself: lastClearConfirmed
+    // flips independently of ssmStatus (it lands after the session's already
+    // been torn down locally), so it needs its own rising-edge check rather
+    // than folding into the reaction above.
+    useEffect(() => {
+      return reaction(
+        () => preemptionViewModel.lastClearConfirmed,
+        (confirmed, prevConfirmed) => {
+          if (!(mainViewModel?.settingsViewModel?.preemptionVoiceAlerts ?? true)) return;
+          if (confirmed === true && prevConfirmed !== true) {
+            VoiceGuidanceService.announce('Preemption cleared');
+          }
+        },
+      );
+    }, [preemptionViewModel, mainViewModel]);
+
+    // /preempt/start failing (unreachable API, no session_id, retries
+    // exhausted) previously had no cue at all beyond a console.log — a driver
+    // had no way to know the request never went through short of noticing
+    // "granted" never arrived. lastStartFailed (set in
+    // PreemptionViewModel.startPreemption's failure branch) closes that gap.
+    useEffect(() => {
+      return reaction(
+        () => preemptionViewModel.lastStartFailed,
+        (failed, prevFailed) => {
+          if (!(mainViewModel?.settingsViewModel?.preemptionVoiceAlerts ?? true)) return;
+          if (failed && !prevFailed) {
+            VoiceGuidanceService.announce('Preemption request failed');
+          }
+        },
+      );
+    }, [preemptionViewModel, mainViewModel]);
 
     // Bias zone detection toward zones the planned route actually passes through
     const routePreemptionHits = mainViewModel?.routeViewModel?.preemptionHits;
@@ -956,7 +1070,11 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
       spatViewModel.setPreferredZoneIds(preferredZoneIds);
     }, [spatViewModel, routeHasActiveRoute, routePreemptionHits]);
 
-    // Track which spat zone the user is currently in
+    // Track which spat zone the user is currently in, and — separately —
+    // which nearby zone (if any) they're heading toward but not yet inside.
+    // Both purely drive SpatZoneLayer's display styling; neither feeds
+    // preemption trigger logic (PreemptionViewModel.syncPosition runs its
+    // own independent, debounced detection).
     useEffect(() => {
       if (userPosition[0] === 0 || userPosition[1] === 0) return;
       const preferredZoneIds =
@@ -964,7 +1082,15 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           ? routePreemptionHits.map((h) => h.zoneId)
           : undefined;
       const activeZone = SpatZoneService.findZoneForPosition(userPosition, preferredZoneIds);
-      setActiveSpatZoneId(activeZone?.id || null);
+      const activeZoneId = activeZone?.id || null;
+      setActiveSpatZoneId(activeZoneId);
+
+      const approachingZone = SpatZoneService.findApproachingZone(
+        userPosition,
+        userHeadingRef.current,
+        activeZoneId,
+      );
+      setHeadingTowardZoneId(approachingZone?.id ?? null);
     }, [userPosition, routeHasActiveRoute, routePreemptionHits]);
 
     // Location tracking via expo-location (primary)
@@ -1162,6 +1288,11 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           logoEnabled={false}
           attributionEnabled={false}
           onRegionIsChanging={handleRegionIsChanging}
+          // Without this, a real two-finger rotate (which almost always has
+          // a little pinch motion mixed in) can get claimed by the pinch-zoom
+          // gesture recognizer instead of the rotate one, silently eating the
+          // rotate — this is what "sometimes doesn't register" was.
+          gestureSettings={{ simultaneousRotateAndPinchZoomEnabled: true }}
         >
           <MapboxGL.Camera
             ref={cameraRef}
@@ -1188,6 +1319,7 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           <SpatZoneLayer
             zones={spatZones}
             activeSpatZoneId={activeSpatZoneId}
+            headingTowardZoneId={headingTowardZoneId}
             spatViewModel={spatViewModel}
             displayMode={mainViewModel?.settingsViewModel?.preemptionZoneDisplay ?? 'full'}
           />
@@ -1276,12 +1408,24 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             !isPreempting &&
             preemptionViewModel.lastClearConfirmed === false
           }
+          clearConfirmed={
+            (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) &&
+            !isPreempting &&
+            preemptionViewModel.lastClearConfirmed === true
+          }
+          startFailed={
+            (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) &&
+            !isPreempting &&
+            preemptionViewModel.lastStartFailed
+          }
           intersectionName={
             isPreempting
               ? preemptionViewModel.activeZoneName ?? undefined
-              : preemptionViewModel.lastClearConfirmed === false
-                ? preemptionViewModel.lastClearZoneName ?? undefined
-                : undefined
+              : preemptionViewModel.lastStartFailed
+                ? preemptionViewModel.lastStartFailedZoneName ?? undefined
+                : preemptionViewModel.lastClearConfirmed !== null
+                  ? preemptionViewModel.lastClearZoneName ?? undefined
+                  : undefined
           }
           top={preemptionBannerTop}
           left={stackPreemptionBannerBelowToggle ? PREEMPTION_BANNER_CAR_LEFT : undefined}

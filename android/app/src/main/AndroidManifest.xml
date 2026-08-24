@@ -9,6 +9,19 @@
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
   <uses-permission android:name="androidx.car.app.NAVIGATION_TEMPLATES"/>
   <uses-permission android:name="androidx.car.app.ACCESS_SURFACE"/>
+  <!-- CarSessionKeepAliveService: holds foreground process priority while
+       connected to Android Auto so TIM/SDSM polling and streaming aren't
+       throttled by Android's background execution limits. specialUse, not
+       connectedDevice — connectedDevice requires the app to hold an actual
+       BLUETOOTH_CONNECT/NFC/UWB permission on API 34+ or startForeground()
+       throws MissingForegroundServiceTypeException and crashes the whole
+       process (phone Activity and the car session share it) — confirmed by
+       an on-device crash log. This service does no device I/O of its own,
+       so specialUse (the catch-all for foreground services that don't fit
+       a predefined type) is the correct category, not a workaround. -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <queries>
     <intent>
       <action android:name="android.intent.action.VIEW"/>
@@ -31,6 +44,14 @@
         <action android:name="androidx.car.app.CarAppService"/>
         <category android:name="androidx.car.app.category.NAVIGATION"/>
       </intent-filter>
+    </service>
+    <service
+        android:name=".carapp.CarSessionKeepAliveService"
+        android:exported="false"
+        android:foregroundServiceType="specialUse">
+      <property
+          android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+          android:value="Keeps TIM zone and SDSM vehicle data updating while connected to Android Auto"/>
     </service>
     <activity android:name=".MainActivity" android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode" android:launchMode="singleTask" android:windowSoftInputMode="adjustPan" android:theme="@style/Theme.App.SplashScreen" android:exported="true">
       <intent-filter>

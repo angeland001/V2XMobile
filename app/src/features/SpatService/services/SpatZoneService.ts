@@ -1,6 +1,8 @@
 // app/src/features/SpatService/services/SpatZoneService.ts
 
+import { point, polygon as turfPolygon, centroid, distance, bearing } from '@turf/turf';
 import { API_CONFIG } from '../../../core/api/config';
+import { closeRing, normalizeToLngLat } from '../../../core/maps/coordinates';
 
 export interface SpatZone {
   id: string;
@@ -282,6 +284,74 @@ export class SpatZoneService {
 
   static findZoneById(zoneId: string): SpatZone | null {
     return this.getActiveZones().find(zone => zone.id === zoneId) || null;
+  }
+
+  // Nearest zone (other than the one the caller says the user is already
+  // in) that's both within maxDistanceMi and roughly ahead of the user —
+  // display-only, for calling out which of several nearby/overlapping zones
+  // on the map the user is approaching. Mirrors TimService's own
+  // buffer+heading proximity logic so both features read the same way to a
+  // driver; does not feed preemption trigger logic (PreemptionViewModel has
+  // its own debounced entry/exit detection, independent of this).
+  static findApproachingZone(
+    userPosition: [number, number],
+    heading: number | null,
+    excludeZoneId: string | null,
+    maxDistanceMi: number = 0.3,
+  ): SpatZone | null {
+    if (!userPosition || userPosition[0] === 0 || userPosition[1] === 0) return null;
+
+    const userPt = point([userPosition[1], userPosition[0]]);
+    let best: { zone: SpatZone; distanceMi: number } | null = null;
+
+    for (const zone of this.getActiveZones()) {
+      if (zone.id === excludeZoneId) continue;
+      if (this.isPointInZone(userPosition, zone)) continue; // already inside — not "approaching"
+
+      try {
+        const poly = turfPolygon([closeRing(zone.polygon)]);
+        const zoneCentroid = centroid(poly);
+        const distanceMi = distance(userPt, zoneCentroid, { units: 'miles' });
+        if (distanceMi > maxDistanceMi) continue;
+
+        if (heading !== null) {
+          const zoneBearing = (bearing(userPt, zoneCentroid) + 360) % 360;
+          const diff = Math.abs(heading - zoneBearing) % 360;
+          if ((diff > 180 ? 360 - diff : diff) > 90) continue;
+        }
+
+        // Only "approaching" if the user is nearer the zone's entry side
+        // than its exit side — otherwise a zone can light up purely from
+        // being physically close while the user is actually on the far/exit
+        // side (already past it, or looping back on the return leg), which
+        // reads as wrong to a driver even though distance+heading alone
+        // look fine.
+        if (zone.entryLine?.length === 2 && zone.exitLine?.length === 2) {
+          const entryMid = this.lineMidpoint(zone.entryLine);
+          const exitMid = this.lineMidpoint(zone.exitLine);
+          const distToEntry = distance(userPt, entryMid, { units: 'miles' });
+          const distToExit = distance(userPt, exitMid, { units: 'miles' });
+          if (distToEntry >= distToExit) continue;
+        }
+
+        if (!best || distanceMi < best.distanceMi) {
+          best = { zone, distanceMi };
+        }
+      } catch {
+        // Skip malformed geometry
+      }
+    }
+
+    return best?.zone ?? null;
+  }
+
+  // entryLine/exitLine coordinates are ambiguously-ordered (see toLatLng) —
+  // normalizeToLngLat resolves that the same way the rest of the codebase
+  // does before handing coordinates to turf, which requires [lng, lat].
+  private static lineMidpoint(line: [number, number][]): ReturnType<typeof point> {
+    const [aLng, aLat] = normalizeToLngLat(line[0]);
+    const [bLng, bLat] = normalizeToLngLat(line[1]);
+    return point([(aLng + bLng) / 2, (aLat + bLat) / 2]);
   }
 
   static isPointInZone(userPosition: [number, number], zone: SpatZone): boolean {

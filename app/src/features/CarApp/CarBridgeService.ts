@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from 'react-native';
+import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import { reaction } from 'mobx';
 import { TimService } from '../TIM/services/TimService';
 import { RouteViewModel } from '../Route/viewmodels/RouteViewModel';
@@ -10,13 +10,9 @@ import { TimCategory } from '../TIM/models/TimTypes';
 // "Status Unavailable" between real state changes.
 const KEEPALIVE_INTERVAL_MS = 3000;
 
-// A non-inside ("approaching") badge is a brief prompt, not a persistent
-// readout: it shows for this long once a zone comes into range, then drops
-// off — unless the zone is inside, or within PERSIST_DISTANCE_M of it, in
-// which case it stays up until TimService's/RouteViewModel's own dismiss
-// rule clears it (the user has left the zone AND is heading away from it).
-const APPROACH_DISPLAY_MS = 3000;
-const PERSIST_DISTANCE_M = 5;
+// Emitted by CarBridgeModule.kt when the driver taps a row on the Android
+// Auto zone-alert screen — see TimZoneScreen.kt's Row.setOnClickListener.
+const TAP_EVENT = 'CarBridgeTimZoneTapped';
 
 // Fixed display order regardless of distance, so the native row order never
 // jitters as zones come and go — matches the red/yellow/blue reading order
@@ -37,6 +33,10 @@ const CATEGORY_LABEL: Record<TimCategory, string> = {
 
 interface CarBadge {
   category: TimCategory;
+  // Identifies which zone this badge is for — carried through to native and
+  // back on tap, so a dismiss can be scoped to this specific zone rather
+  // than the whole category (see the tap listener below).
+  timId: number;
   color: string;
   label: string;
   distanceText: string;
@@ -66,6 +66,7 @@ function formatDistanceMeters(m: number): string {
 function toBadge(category: TimCategory, candidate: CategoryCandidate): CarBadge {
   return {
     category,
+    timId: candidate.timId,
     color: CATEGORY_COLOR[category],
     label: CATEGORY_LABEL[category],
     distanceText: candidate.inside ? 'In Zone' : `${formatDistanceMeters(candidate.distanceM)} ahead`,
@@ -81,22 +82,13 @@ export function startTimCarBridge(
     return () => {};
   }
 
-  // Tracks, per category, the approaching (non-inside) zone currently being
-  // flash-shown and when it started — drives the APPROACH_DISPLAY_MS window.
-  const badgeState = new Map<TimCategory, { timId: number; firstSeenAt: number }>();
-  // One pending re-push per category, scheduled to land exactly when that
-  // category's flash window elapses — without this, a badge would only get
-  // re-evaluated (and hidden) on the next unrelated state change or the next
-  // KEEPALIVE_INTERVAL_MS tick, both of which can lag the 3s window.
-  const expiryTimers = new Map<TimCategory, NodeJS.Timeout>();
-
-  const clearExpiry = (category: TimCategory): void => {
-    const timer = expiryTimers.get(category);
-    if (timer) {
-      clearTimeout(timer);
-      expiryTimers.delete(category);
-    }
-  };
+  // The zone the driver tapped away, per category — stays suppressed until
+  // that specific zone drops out of candidacy (left it, or a route/ambient
+  // recompute no longer surfaces it) or a different zone takes its place;
+  // see selectVisibleBadges. Tapping doesn't clear the underlying condition,
+  // just this display — the same badge will come back if the same zone is
+  // ever re-approached later (a fresh candidacy after having dropped out).
+  const dismissedByCategory = new Map<TimCategory, number>();
 
   const computeCandidates = (): Partial<Record<TimCategory, CategoryCandidate>> => {
     if (!settingsViewModel.carDisplayAlerts) return {};
@@ -141,43 +133,28 @@ export function startTimCarBridge(
     return result;
   };
 
-  // Applies the flash/persist lifecycle on top of the raw candidates: inside
-  // (or within PERSIST_DISTANCE_M) zones are always shown; a merely
-  // approaching zone shows for APPROACH_DISPLAY_MS from when it first
-  // appears, then drops out even though the underlying condition may still
-  // hold — a brief prompt, not a continuous readout.
+  // Every candidate is shown persistently — no auto-expire — until either
+  // the driver taps it away on the Android Auto screen (dismissedByCategory,
+  // set by the tap listener below) or the zone itself drops out of
+  // candidacy entirely (left the buffer, no longer heading toward it, or
+  // actually exited it).
   const selectVisibleBadges = (candidates: Partial<Record<TimCategory, CategoryCandidate>>): CarBadge[] => {
-    const now = Date.now();
     const badges: CarBadge[] = [];
 
     for (const category of CATEGORY_ORDER) {
       const candidate = candidates[category];
       if (!candidate) {
-        badgeState.delete(category);
-        clearExpiry(category);
+        dismissedByCategory.delete(category);
         continue;
       }
 
-      if (candidate.inside || candidate.distanceM <= PERSIST_DISTANCE_M) {
-        badgeState.delete(category);
-        clearExpiry(category);
-        badges.push(toBadge(category, candidate));
-        continue;
-      }
+      if (dismissedByCategory.get(category) === candidate.timId) continue;
+      // A stale dismissal for a different, earlier zone in this category —
+      // clear it so it doesn't linger and (harmlessly, since the timId
+      // check above already wouldn't match) confuse later reads.
+      dismissedByCategory.delete(category);
 
-      let state = badgeState.get(category);
-      if (!state || state.timId !== candidate.timId) {
-        state = { timId: candidate.timId, firstSeenAt: now };
-        badgeState.set(category, state);
-        clearExpiry(category);
-        expiryTimers.set(category, setTimeout(push, APPROACH_DISPLAY_MS));
-      }
-
-      if (now - state.firstSeenAt < APPROACH_DISPLAY_MS) {
-        badges.push(toBadge(category, candidate));
-      } else {
-        badgeState.delete(category);
-      }
+      badges.push(toBadge(category, candidate));
     }
 
     return badges;
@@ -197,6 +174,21 @@ export function startTimCarBridge(
     }
     NativeModules.CarBridge?.updateTimZones(JSON.stringify(badges));
   }
+
+  // TimZoneScreen.kt's Row.setOnClickListener → CarAppBridge.notifyBadgeTapped
+  // → CarBridgeModule emits this event with the tapped badge's category and
+  // timId. Recording it here and re-pushing is what actually removes the
+  // badge from the native screen — that round trip already exists for every
+  // other state change (see the reaction below), so nothing native-side
+  // needs to force its own re-render.
+  const tapSubscription = DeviceEventEmitter.addListener(
+    TAP_EVENT,
+    (payload: { category?: TimCategory; timId?: number }) => {
+      if (!payload || typeof payload.timId !== 'number' || !payload.category) return;
+      dismissedByCategory.set(payload.category, payload.timId);
+      push();
+    },
+  );
 
   const disposeReaction = reaction(
     () =>
@@ -221,6 +213,6 @@ export function startTimCarBridge(
   return () => {
     disposeReaction();
     clearInterval(keepaliveInterval);
-    for (const category of CATEGORY_ORDER) clearExpiry(category);
+    tapSubscription.remove();
   };
 }

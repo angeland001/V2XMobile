@@ -75,6 +75,10 @@ export class VehicleDisplayViewModel {
   // Configurable via Settings > SDSM Detection Radius; MainViewModel keeps
   // this in sync with SettingsViewModel.sdsmDisplayRadiusM.
   sdsmMaxRadiusM = 250;
+  // Bypasses sdsmMaxRadiusM entirely when true — Settings > "Show All SDSM".
+  // MainViewModel keeps this in sync with
+  // SettingsViewModel.sdsmShowAllRegardlessOfDistance.
+  showAllRegardlessOfDistance = false;
 
   // Internal tracking with history
   private vehicleHistory: Map<number, VehicleWithHistory> = new Map();
@@ -371,7 +375,7 @@ export class VehicleDisplayViewModel {
         speed: v.speed
       }));
 
-    if (this.userLocation) {
+    if (this.userLocation && !this.showAllRegardlessOfDistance) {
       displayableVehicles = SDSMDataService.filterByRadius(displayableVehicles, this.userLocation, this.sdsmMaxRadiusM);
       displayableVRUs = SDSMDataService.filterByRadius(displayableVRUs, this.userLocation, this.sdsmMaxRadiusM);
     }
@@ -458,6 +462,12 @@ export class VehicleDisplayViewModel {
   setDisplayRadius(meters: number): void {
     runInAction(() => {
       this.sdsmMaxRadiusM = meters;
+    });
+  }
+
+  setShowAllRegardlessOfDistance(showAll: boolean): void {
+    runInAction(() => {
+      this.showAllRegardlessOfDistance = showAll;
     });
   }
 

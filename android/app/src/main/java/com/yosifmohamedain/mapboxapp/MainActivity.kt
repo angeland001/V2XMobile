@@ -1,8 +1,12 @@
 package com.yosifmohamedain.mapboxapp
 import expo.modules.splashscreen.SplashScreenManager
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
@@ -21,6 +25,26 @@ class MainActivity : ReactActivity() {
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
     super.onCreate(null)
+
+    // CarSessionKeepAliveService's foreground notification (required by the
+    // OS whenever it runs, connected to Android Auto) needs this at runtime
+    // on API 33+ or it silently never shows. Requested here, at the app's
+    // own launch, so it's already resolved well before a car ever connects.
+    if (
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+      ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+        PackageManager.PERMISSION_GRANTED
+    ) {
+      ActivityCompat.requestPermissions(
+        this,
+        arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+        NOTIFICATION_PERMISSION_REQUEST_CODE,
+      )
+    }
+  }
+
+  companion object {
+    private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 4202
   }
 
   /**

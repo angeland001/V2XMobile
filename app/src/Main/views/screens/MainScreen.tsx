@@ -41,6 +41,7 @@ export const MainScreen: React.FC<MainScreenProps> = observer(({ viewModel }) =>
         mainViewModel={viewModel}
         spatViewModel={viewModel.spatViewModel}
         lanesViewModel={viewModel.lanesViewModel}
+        preemptionViewModel={viewModel.preemptionViewModel}
       />
     </View>
   );

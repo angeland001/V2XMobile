@@ -1,5 +1,6 @@
 // app/src/features/Map/viewmodels/MapViewModel.ts
 import { makeAutoObservable, runInAction } from 'mobx';
+import { distance, point } from '@turf/turf';
 import { Coordinate, toGeoJSONCoordinate } from '../models/Location';
 import { LocationService } from '../services/LocationService';
 
@@ -19,6 +20,9 @@ export class MapViewModel {
   loading: boolean = false;
   showCrosswalkPolygon: boolean = false; // Toggle for polygon visibility
   private headingSubscription: HeadingSubscription | null = null;
+  // Last raw position sample, used to derive a speed from position deltas —
+  // see setUserLocation. Not observable; purely an internal calculation input.
+  private lastLocationSample: { lat: number; lng: number; atMs: number } | null = null;
 
   constructor() {
     makeAutoObservable(this);
@@ -85,9 +89,35 @@ export class MapViewModel {
       this.userHeading = location.heading;
       this.headingValid = true;
     }
-    if (location.speed !== undefined && location.speed !== null) {
-      this.userSpeed = location.speed;
+
+    // GPS mock/spoofer tools (used for testing without a real drive) commonly
+    // leave coords.speed at 0/undefined even while genuinely moving the
+    // reported position — relying on reported speed alone left isMoving
+    // permanently false under those tools, silently disabling anything gated
+    // on it (ambient TIM proximity checks). Derive a speed from consecutive
+    // position samples and take whichever of reported/derived is higher, so a
+    // real device's more-accurate reported speed still wins when both exist,
+    // but a spoofer's fake position movement still counts as "moving".
+    const now = Date.now();
+    let derivedSpeed = 0;
+    if (this.lastLocationSample) {
+      const dtS = (now - this.lastLocationSample.atMs) / 1000;
+      if (dtS > 0.1 && dtS < 10) {
+        const meters = distance(
+          point([this.lastLocationSample.lng, this.lastLocationSample.lat]),
+          point([location.longitude, location.latitude]),
+          { units: 'meters' },
+        );
+        // Ignore sub-2m deltas — GPS jitter at a dead stop, not real movement.
+        if (meters > 2) {
+          derivedSpeed = meters / dtS;
+        }
+      }
     }
+    this.lastLocationSample = { lat: location.latitude, lng: location.longitude, atMs: now };
+
+    const reportedSpeed = location.speed ?? 0;
+    this.userSpeed = Math.max(reportedSpeed, derivedSpeed);
   }
 
   // Get user heading

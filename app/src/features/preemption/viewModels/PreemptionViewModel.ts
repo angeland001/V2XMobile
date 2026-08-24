@@ -44,6 +44,16 @@ export class PreemptionViewModel {
   private clearConfirmTimeout: NodeJS.Timeout | null = null;
   private static readonly CLEAR_CONFIRM_DISPLAY_MS = 10_000;
 
+  // True in the window right after /preempt/start comes back empty/errored
+  // (unreachable API, no session_id, retries exhausted) — previously this
+  // was console-log only, so a driver had no way to know the request never
+  // went through short of noticing "requested" never advanced to "granted".
+  // Runs on its own display timeout the same way lastClearConfirmed does.
+  lastStartFailed = false;
+  lastStartFailedZoneName: string | null = null;
+  private startFailedTimeout: NodeJS.Timeout | null = null;
+  private static readonly START_FAILED_DISPLAY_MS = 10_000;
+
   // Tracks the most recent successful start/heartbeat response. Drives
   // feedStale below, which callers use to detect a preempt bridge that has
   // gone quiet instead of continuing to show a live-looking status.
@@ -54,16 +64,20 @@ export class PreemptionViewModel {
   private static readonly HEARTBEAT_STALE_MS = 5000;
 
   private previousPosition: [number, number] | null = null;
-  private wasInsideZone = false;
-  private validEntry = false;
   private trackedZoneId: string | null = null;
   private isPendingStart = false;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private staleCheckInterval: NodeJS.Timeout | null = null;
 
-  // GPS Debounce: require 3 consecutive samples in same zone to trigger change
-  private zoneDetectionBuffer: string[] = [];
-  private readonly DEBOUNCE_SAMPLE_COUNT = 3;
+  // Exit confirmation only: how many consecutive raw samples must disagree
+  // with trackedZoneId before an exit is actually acted on — protects
+  // against a single noisy "outside the polygon" GPS sample clearing a live
+  // session. Entry is deliberately NOT gated this way (see syncPosition) —
+  // it already requires an actual entry-line crossing, which is specific
+  // enough on its own that waiting several more samples to confirm it just
+  // adds latency between the real crossing and preemption firing.
+  private readonly EXIT_CONFIRM_SAMPLES = 3;
+  private exitCandidateStreak = 0;
 
   // Config Caching: cache preemption configs by spat_zone_id
   private configCache: Map<string, PreemptionZoneConfig> = new Map();
@@ -103,121 +117,75 @@ export class PreemptionViewModel {
       return;
     }
 
-    // Find which zone (if any) user is currently in
-    const currentZone = allZones.find((zone) =>
+    // Find which zone (if any) user is currently in, per this single raw sample
+    const rawZone = allZones.find((zone) =>
       SpatZoneService.isPointInZone(currentPosition, zone)
     );
+    const rawZoneId = rawZone?.id ?? 'none';
+    const previousPosition = this.previousPosition;
 
-    // GPS Debounce: add current zone to buffer
-    const currentZoneId = currentZone?.id ?? 'none';
-    this.zoneDetectionBuffer.push(currentZoneId);
-    // Keep buffer size at most DEBOUNCE_SAMPLE_COUNT
-    if (this.zoneDetectionBuffer.length > this.DEBOUNCE_SAMPLE_COUNT) {
-      this.zoneDetectionBuffer.shift();
+    // Immediate, geometry-gated entry into a zone we're not already
+    // tracking — a genuine crossing of that zone's own entry line (as
+    // opposed to "polygon.contains() just flipped," which a single noisy
+    // GPS sample can do near any boundary) is specific enough on its own
+    // that it doesn't need multi-sample confirmation. Also covers a direct
+    // zone-to-zone hop: the old zone's session is cleared right away, same
+    // as before.
+    if (rawZone && rawZone.id !== this.trackedZoneId && previousPosition && previousPosition[0] !== 0 && previousPosition[1] !== 0) {
+      const hasEntryExitLines =
+        Array.isArray(rawZone.entryLine) && rawZone.entryLine.length === 2 &&
+        Array.isArray(rawZone.exitLine) && rawZone.exitLine.length === 2;
+
+      const validEntry = hasEntryExitLines
+        ? SpatZoneService.crossesEntryLine(previousPosition, currentPosition, rawZone) &&
+          !SpatZoneService.crossesExitLine(previousPosition, currentPosition, rawZone)
+        : true; // no lines configured — trust the raw reading rather than never firing
+
+      if (validEntry) {
+        console.log(`[Preemption] Zone entry confirmed: ${this.trackedZoneId} → ${rawZone.id}`);
+        if (this.trackedZoneId !== null) {
+          this.onZoneExit();
+        }
+        this.trackedZoneId = rawZone.id;
+        this.exitCandidateStreak = 0;
+        this.insideZone = true;
+
+        if (this.isEnabled && !this.sessionId && !this.isPendingStart) {
+          this.startPreemption(rawZone);
+        }
+
+        if (this.sessionId && !this.heartbeatInterval) {
+          this.startHeartbeat();
+        }
+        this.previousPosition = currentPosition;
+        return;
+      }
     }
 
-    // Check if all samples in buffer match (zone is stable)
-    const allSamplesMatch =
-      this.zoneDetectionBuffer.length === this.DEBOUNCE_SAMPLE_COUNT &&
-      this.zoneDetectionBuffer.every((id) => id === this.zoneDetectionBuffer[0]);
-
-    // Zone changed → only reset tracking if debounce confirms the change
-    if (allSamplesMatch && currentZoneId !== (this.trackedZoneId ?? 'none')) {
-      console.log(
-        `[Preemption] Zone change detected (debounced): ${this.trackedZoneId} → ${currentZoneId}`,
-      );
-      const comingFromZone = this.trackedZoneId !== null;
-      this.trackedZoneId = currentZone?.id ?? null;
-      this.zoneDetectionBuffer = [];
-
-      if (comingFromZone) {
-        // Leaving the old zone must clear its session regardless of whether the
-        // new zone turns out to be a valid entry — justExited can't fire below
-        // since isInsideZone stays true across a direct zone-to-zone hop.
-        this.onZoneExit();
-      }
-
-      if (comingFromZone && currentZone !== undefined) {
-        // Zone-to-zone transition: re-trigger entry detection for new zone,
-        // but still validate direction against the new zone's own entry/exit
-        // line rather than assuming every hop is a legitimate approach.
-        this.wasInsideZone = false;
-        const previousPosition = this.previousPosition;
-        if (previousPosition) {
-          const crossedEntry = SpatZoneService.crossesEntryLine(
-            previousPosition,
-            currentPosition,
-            currentZone,
-          );
-          const crossedExit = SpatZoneService.crossesExitLine(
-            previousPosition,
-            currentPosition,
-            currentZone,
-          );
-          this.validEntry = crossedEntry && !crossedExit;
-        } else {
-          this.validEntry = false;
+    // No fresh valid entry this sample — decide whether the currently
+    // tracked zone should be confirmed exited. Debounced: a single stray
+    // "not in my zone" reading must not itself clear a live session.
+    if (this.trackedZoneId !== null) {
+      if (rawZoneId === this.trackedZoneId) {
+        this.exitCandidateStreak = 0;
+      } else {
+        this.exitCandidateStreak += 1;
+        if (this.exitCandidateStreak >= this.EXIT_CONFIRM_SAMPLES) {
+          console.log(`[Preemption] Zone exit confirmed (debounced): ${this.trackedZoneId} → ${rawZoneId}`);
+          this.onZoneExit();
+          this.trackedZoneId = null;
+          this.insideZone = false;
+          this.exitCandidateStreak = 0;
         }
       }
-      // Outside-to-zone: entry line validation already ran correctly on the first
-      // zone sample. wasInsideZone, validEntry, and previousPosition are correct —
-      // do not override them here.
     }
 
-    const isInsideZone = currentZone !== undefined;
-    const justEntered = !this.wasInsideZone && isInsideZone;
-    const justExited = this.wasInsideZone && !isInsideZone;
-
-    // Detect valid entry (via entry line)
-    if (justEntered && currentZone) {
-      const previousPosition = this.previousPosition;
-      const hasEntryExitLines =
-        Array.isArray(currentZone.entryLine) &&
-        currentZone.entryLine.length === 2 &&
-        Array.isArray(currentZone.exitLine) &&
-        currentZone.exitLine.length === 2;
-
-      if (
-        hasEntryExitLines &&
-        previousPosition &&
-        previousPosition[0] !== 0 &&
-        previousPosition[1] !== 0
-      ) {
-        const crossedEntry = SpatZoneService.crossesEntryLine(
-          previousPosition,
-          currentPosition,
-          currentZone,
-        );
-        const crossedExit = SpatZoneService.crossesExitLine(
-          previousPosition,
-          currentPosition,
-          currentZone,
-        );
-        this.validEntry = crossedEntry && !crossedExit;
-      } else {
-        this.validEntry = true;
-      }
-    }
-
-    // Update zone state
-    this.insideZone = isInsideZone;
-
-    // Handle zone exit
-    if (justExited) {
-      this.onZoneExit();
-    }
-
-    // Trigger preemption START on valid entry (if toggle is ON and no active session)
-    if (justEntered && this.validEntry && this.isEnabled && !this.sessionId && !this.isPendingStart && currentZone) {
-      this.startPreemption(currentZone);
-    }
-
-    // Start heartbeat if inside zone with active session
-    if (isInsideZone && this.sessionId && !this.heartbeatInterval) {
+    // Start heartbeat if confirmed inside a zone with an active session —
+    // a level check each call, no debounced edge needed here.
+    if (this.trackedZoneId !== null && this.sessionId && !this.heartbeatInterval) {
       this.startHeartbeat();
     }
 
-    this.wasInsideZone = isInsideZone;
     this.previousPosition = currentPosition;
   }
 
@@ -249,6 +217,13 @@ export class PreemptionViewModel {
     runInAction(() => {
       this.ssmStatus = 'requesting';
       this.activeZoneName = zone.name;
+      // A fresh attempt supersedes any leftover failure flag from a previous
+      // one — don't let an old "request failed" linger through a new try.
+      this.lastStartFailed = false;
+      if (this.startFailedTimeout) {
+        clearTimeout(this.startFailedTimeout);
+        this.startFailedTimeout = null;
+      }
     });
 
     console.log('[Preemption] START: Building SRM payload and calling /preempt/start');
@@ -290,6 +265,9 @@ export class PreemptionViewModel {
         // Heartbeat will be started in syncPosition
       } else {
         this.ssmStatus = null;
+        this.activeZoneName = null;
+        this.lastStartFailed = true;
+        this.lastStartFailedZoneName = zone.name;
         console.log(
           '[Preemption] START failed for zone:',
           zone.name,
@@ -297,6 +275,20 @@ export class PreemptionViewModel {
         );
       }
     });
+    if (!result) this.scheduleStartFailedExpiry();
+  }
+
+  private scheduleStartFailedExpiry(): void {
+    if (this.startFailedTimeout) {
+      clearTimeout(this.startFailedTimeout);
+    }
+    this.startFailedTimeout = setTimeout(() => {
+      this.startFailedTimeout = null;
+      runInAction(() => {
+        this.lastStartFailed = false;
+        this.lastStartFailedZoneName = null;
+      });
+    }, PreemptionViewModel.START_FAILED_DISPLAY_MS);
   }
 
   private startHeartbeat(): void {
@@ -369,7 +361,6 @@ export class PreemptionViewModel {
     this.sessionId = null;
     this.ssmStatus = null;
     this.activeZoneName = null;
-    this.validEntry = false;
     this.requestedSignalGroup = null;
     this.requestedPreemptChannel = null;
     this.controllerSignalState = null;
@@ -576,8 +567,12 @@ export class PreemptionViewModel {
       clearTimeout(this.clearConfirmTimeout);
       this.clearConfirmTimeout = null;
     }
+    if (this.startFailedTimeout) {
+      clearTimeout(this.startFailedTimeout);
+      this.startFailedTimeout = null;
+    }
     this.isPendingStart = false;
-    this.zoneDetectionBuffer = [];
+    this.exitCandidateStreak = 0;
     this.configCache.clear();
   }
 }

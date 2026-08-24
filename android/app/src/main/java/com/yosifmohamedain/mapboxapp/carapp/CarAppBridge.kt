@@ -4,6 +4,10 @@ object CarAppBridge {
 
     data class TimBadge(
         val category: String,
+        // Which zone this badge is for — echoed back via notifyBadgeTapped so
+        // the JS side (CarBridgeService.ts) can scope a dismiss to this
+        // specific zone rather than the whole category.
+        val timId: Int,
         val color: String,
         val label: String,
         val distanceText: String,
@@ -41,6 +45,32 @@ object CarAppBridge {
     fun removeTimZoneListener(listener: () -> Unit) {
         synchronized(timZoneListeners) {
             timZoneListeners.remove(listener)
+        }
+    }
+
+    // Fired by TimZoneScreen when the driver taps a badge row. Forwarded to
+    // JS (CarBridgeModule) so CarBridgeService.ts can record the dismissal
+    // and push back an updated (badge-removed) state — the actual removal
+    // from screen happens through that normal push round trip, same as any
+    // other state change, rather than this object owning any display state
+    // itself.
+    private val tapListeners = mutableSetOf<(category: String, timId: Int) -> Unit>()
+
+    fun notifyBadgeTapped(category: String, timId: Int) {
+        synchronized(tapListeners) {
+            tapListeners.toList()
+        }.forEach { it(category, timId) }
+    }
+
+    fun addTapListener(listener: (category: String, timId: Int) -> Unit) {
+        synchronized(tapListeners) {
+            tapListeners.add(listener)
+        }
+    }
+
+    fun removeTapListener(listener: (category: String, timId: Int) -> Unit) {
+        synchronized(tapListeners) {
+            tapListeners.remove(listener)
         }
     }
 }

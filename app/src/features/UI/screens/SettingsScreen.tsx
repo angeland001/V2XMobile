@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
-  Switch,
   ScrollView,
   StyleSheet,
   TouchableOpacity,
@@ -10,9 +9,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { observer } from 'mobx-react-lite';
+import type * as Speech from 'expo-speech';
 import { ROUTE_COLORS, ROUTE_FONTS } from '../appTheme';
 import { API_CONFIG } from '../../../core/api/config';
 import { SettingsViewModel, PreemptionZoneDisplayMode } from '../viewmodels/SettingsViewModel';
+import { PreemptionViewModel } from '../../preemption/viewModels/PreemptionViewModel';
+import { FlatToggleSwitch } from '../components/FlatToggleSwitch';
+import { VoiceGuidanceService } from '../../Route/services/VoiceGuidanceService';
 
 interface ToggleRowProps {
   label: string;
@@ -31,13 +34,7 @@ const ToggleRow: React.FC<ToggleRowProps> = ({ label, sublabel, value, onToggle,
       <Text style={styles.toggleLabel}>{label}</Text>
       {sublabel && <Text style={styles.toggleSub}>{sublabel}</Text>}
     </View>
-    <Switch
-      value={value}
-      onValueChange={onToggle}
-      trackColor={{ false: ROUTE_COLORS.steelDim, true: ROUTE_COLORS.amberBorder }}
-      thumbColor={value ? ROUTE_COLORS.amber : ROUTE_COLORS.panel}
-      ios_backgroundColor={ROUTE_COLORS.steelDim}
-    />
+    <FlatToggleSwitch enabled={value} onToggle={onToggle} />
   </View>
 );
 
@@ -78,7 +75,7 @@ function SegmentedRow<T extends string | number>({
           {sublabel && <Text style={styles.toggleSub}>{sublabel}</Text>}
         </View>
       </View>
-      <View style={styles.segmentedControl}>
+      <View style={[styles.segmentedControl, dimmed && styles.segmentedControlDimmed]}>
         {segments.map((segment) => {
           const selected = value === segment.value;
           return (
@@ -86,6 +83,7 @@ function SegmentedRow<T extends string | number>({
               key={segment.value}
               style={[styles.segmentButton, selected && styles.segmentButtonActive]}
               onPress={() => onChange(segment.value)}
+              disabled={dimmed}
             >
               <Text style={[styles.segmentButtonText, selected && styles.segmentButtonTextActive]}>
                 {segment.label}
@@ -114,11 +112,97 @@ const InfoRow: React.FC<InfoRowProps> = ({ label, value, icon }) => (
   </View>
 );
 
-interface SettingsScreenProps {
+interface VoicePickerProps {
   settingsViewModel: SettingsViewModel;
 }
 
-export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ settingsViewModel }) => {
+// Expandable row: collapsed it just shows the current selection, tap to
+// open the full list. Device-installed voice count varies wildly (a handful
+// on some phones, dozens on others once every accent is counted), so an
+// always-expanded list would dominate the screen on the wrong device.
+const VoicePicker: React.FC<VoicePickerProps> = observer(({ settingsViewModel }) => {
+  const [voices, setVoices] = useState<Speech.Voice[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    VoiceGuidanceService.getAvailableVoices().then((list) => {
+      if (!cancelled) {
+        setVoices(list);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const options: { id: string | null; name: string; meta?: string }[] = [
+    { id: null, name: 'Device Default' },
+    ...voices.map((v) => ({
+      id: v.identifier,
+      name: v.name,
+      meta: v.quality ? `${v.language} · ${v.quality}` : v.language,
+    })),
+  ];
+
+  const selected = options.find((o) => o.id === settingsViewModel.voiceIdentifier);
+
+  const selectVoice = (id: string | null): void => {
+    settingsViewModel.voiceIdentifier = id;
+    VoiceGuidanceService.preview(id);
+  };
+
+  return (
+    <>
+      <TouchableOpacity style={styles.toggleRow} onPress={() => setExpanded((e) => !e)} activeOpacity={0.7}>
+        <View style={[styles.rowIcon, { backgroundColor: ROUTE_COLORS.amberDim }]}>
+          <Ionicons name="mic-outline" size={17} color={ROUTE_COLORS.amberText} />
+        </View>
+        <View style={styles.toggleText}>
+          <Text style={styles.toggleLabel}>Voice</Text>
+          <Text style={styles.toggleSub} numberOfLines={1}>
+            {loading ? 'Loading voices…' : selected?.name ?? 'Device Default'}
+          </Text>
+        </View>
+        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={ROUTE_COLORS.steel} />
+      </TouchableOpacity>
+
+      {expanded && options.map((opt) => {
+        const active = opt.id === settingsViewModel.voiceIdentifier;
+        return (
+          <React.Fragment key={opt.id ?? 'default'}>
+            <View style={styles.cardDivider} />
+            <TouchableOpacity style={styles.voiceOption} onPress={() => selectVoice(opt.id)} activeOpacity={0.7}>
+              <View style={styles.voiceOptionText}>
+                <Text style={[styles.voiceOptionName, active && styles.voiceOptionNameActive]} numberOfLines={1}>
+                  {opt.name}
+                </Text>
+                {opt.meta && (
+                  <Text style={styles.voiceOptionMeta} numberOfLines={1}>{opt.meta}</Text>
+                )}
+              </View>
+              {active && <Ionicons name="checkmark" size={16} color={ROUTE_COLORS.amber} />}
+            </TouchableOpacity>
+          </React.Fragment>
+        );
+      })}
+
+      {expanded && !loading && voices.length === 0 && (
+        <>
+          <View style={styles.cardDivider} />
+          <Text style={styles.voiceEmpty}>No additional voices found on this device.</Text>
+        </>
+      )}
+    </>
+  );
+});
+
+interface SettingsScreenProps {
+  settingsViewModel: SettingsViewModel;
+  preemptionViewModel: PreemptionViewModel;
+}
+
+export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ settingsViewModel, preemptionViewModel }) => {
   const insets = useSafeAreaInsets();
   return (
     <View style={styles.container}>
@@ -190,12 +274,49 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
             onToggle={(v) => { settingsViewModel.showLanes = v; }}
           />
           <View style={styles.cardDivider} />
+          <SegmentedRow
+            icon="radio-outline"
+            label="SDSM Detection Radius"
+            sublabel="Show vehicles & pedestrians within this range"
+            value={settingsViewModel.sdsmDisplayRadiusM}
+            segments={SDSM_RADIUS_SEGMENTS}
+            onChange={(v) => { settingsViewModel.sdsmDisplayRadiusM = v; }}
+            dimmed={settingsViewModel.sdsmShowAllRegardlessOfDistance}
+          />
+          <View style={styles.cardDivider} />
+          <ToggleRow
+            icon="infinite-outline"
+            label="Show All SDSM"
+            sublabel="Ignore detection radius — show all vehicles & pedestrians"
+            value={settingsViewModel.sdsmShowAllRegardlessOfDistance}
+            onToggle={(v) => { settingsViewModel.sdsmShowAllRegardlessOfDistance = v; }}
+          />
+        </View>
+
+        <Text style={styles.sectionLabel}>PREEMPTION</Text>
+        <View style={styles.card}>
+          <ToggleRow
+            icon="flash"
+            label="Auto Preemption"
+            sublabel="Arm automatic signal preemption requests"
+            value={preemptionViewModel.isEnabled}
+            onToggle={(v) => { preemptionViewModel.toggleEnabled(v); }}
+          />
+          <View style={styles.cardDivider} />
           <ToggleRow
             icon="flash-outline"
             label="Preemption Status Banner"
             sublabel="Show requested / granted / cleared status"
             value={settingsViewModel.preemptionBannerEnabled}
             onToggle={(v) => { settingsViewModel.preemptionBannerEnabled = v; }}
+          />
+          <View style={styles.cardDivider} />
+          <ToggleRow
+            icon="volume-high-outline"
+            label="Preemption Voice Alerts"
+            sublabel="Spoken cue on request, grant, and clear"
+            value={settingsViewModel.preemptionVoiceAlerts}
+            onToggle={(v) => { settingsViewModel.preemptionVoiceAlerts = v; }}
           />
           <View style={styles.cardDivider} />
           <SegmentedRow
@@ -207,15 +328,11 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
             dimmed={settingsViewModel.preemptionZoneDisplay === 'off'}
             onChange={(v) => { settingsViewModel.preemptionZoneDisplay = v; }}
           />
-          <View style={styles.cardDivider} />
-          <SegmentedRow
-            icon="radio-outline"
-            label="SDSM Detection Radius"
-            sublabel="Show vehicles & pedestrians within this range"
-            value={settingsViewModel.sdsmDisplayRadiusM}
-            segments={SDSM_RADIUS_SEGMENTS}
-            onChange={(v) => { settingsViewModel.sdsmDisplayRadiusM = v; }}
-          />
+        </View>
+
+        <Text style={styles.sectionLabel}>VOICE</Text>
+        <View style={styles.card}>
+          <VoicePicker settingsViewModel={settingsViewModel} />
         </View>
 
         <Text style={styles.sectionLabel}>CONNECTION</Text>
@@ -349,6 +466,9 @@ const styles = StyleSheet.create({
     padding: 3,
     gap: 3,
   },
+  segmentedControlDimmed: {
+    opacity: 0.4,
+  },
   segmentButton: {
     flex: 1,
     paddingVertical: 6,
@@ -385,6 +505,41 @@ const styles = StyleSheet.create({
     color: ROUTE_COLORS.steel,
     maxWidth: '50%',
     textAlign: 'right',
+  },
+  voiceOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingLeft: 56,
+    paddingRight: 14,
+    paddingVertical: 10,
+    gap: 12,
+  },
+  voiceOptionText: {
+    flex: 1,
+    gap: 1,
+  },
+  voiceOptionName: {
+    fontFamily: ROUTE_FONTS.body,
+    fontSize: 13,
+    color: ROUTE_COLORS.steel,
+  },
+  voiceOptionNameActive: {
+    fontFamily: ROUTE_FONTS.bodySemiBold,
+    color: ROUTE_COLORS.ink,
+  },
+  voiceOptionMeta: {
+    fontFamily: ROUTE_FONTS.mono,
+    fontSize: 10,
+    color: ROUTE_COLORS.steelDim,
+    marginTop: 1,
+  },
+  voiceEmpty: {
+    fontFamily: ROUTE_FONTS.body,
+    fontSize: 12,
+    color: ROUTE_COLORS.steel,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
   },
   footer: {
     flexDirection: 'row',

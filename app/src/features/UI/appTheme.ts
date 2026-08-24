@@ -32,8 +32,12 @@ export const ROUTE_COLORS = {
   danger:       '#C2321F',
   dangerDim:    'rgba(194, 50, 31, 0.10)',
 
-  preempt:      '#6D3FC2',
-  preemptDim:   'rgba(109, 63, 194, 0.10)',
+  // Matches the flash-icon color MapView.tsx's SpatZoneLayer uses for a
+  // preemption/SPaT zone that isn't the one you're currently in (its "icon"
+  // display mode) — was a standalone purple before, inconsistent with how
+  // the same zone type reads on the actual Map tab.
+  preempt:      '#3B82F6',
+  preemptDim:   'rgba(59, 130, 246, 0.10)',
 
   steel:        '#6B7280',
   steelDim:     '#A8ACB6',

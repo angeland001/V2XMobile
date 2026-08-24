@@ -39,7 +39,12 @@ export const MainNavigator: React.FC<MainNavigatorProps> = observer(({ viewModel
   );
 
   const SettingsScreenWrapped = useCallback(
-    () => <SettingsScreen settingsViewModel={viewModel.settingsViewModel} />,
+    () => (
+      <SettingsScreen
+        settingsViewModel={viewModel.settingsViewModel}
+        preemptionViewModel={viewModel.preemptionViewModel}
+      />
+    ),
     [viewModel],
   );
 

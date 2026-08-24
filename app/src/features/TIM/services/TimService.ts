@@ -67,10 +67,7 @@ export class TimService {
   // left AND turned away from — see the dismiss rule in checkProximity.
   // Distinct from alertedIds, which only gates the one-shot toast.
   private activeInsideIds = new Set<number>();
-  // False until the first checkProximity pass with real TIM data. That pass seeds
-  // alertedIds for anything already in-buffer without alerting — so a zone that
-  // was already "true" the moment monitoring started (e.g. at app boot) doesn't
-  // fire, and only a genuine transition into a zone does.
+  // False until primeIfNeeded's one-time seed pass has run — see there.
   private hasSeededInitialProximity = false;
 
   constructor() {
@@ -120,17 +117,41 @@ export class TimService {
     this.unreadAlertCount = 0;
   }
 
+  // One-time seed of alertedIds/activeInsideIds for whatever the user is
+  // already inside the buffer of the moment real GPS + TIM data both exist —
+  // called unconditionally (regardless of moving/navigating) so it reflects
+  // actual app boot, not "wherever the first movement-gated checkProximity
+  // call happened to land". Without this decoupling, a zone the user starts
+  // near — but doesn't reach until well into the drive — got permanently
+  // misclassified as "already seen at boot" and never alerted. No-ops after
+  // the first successful pass (or forever if activeTims never loads).
+  primeIfNeeded(latitude: number, longitude: number): void {
+    if (this.hasSeededInitialProximity || !this.activeTims.length) return;
+    this.hasSeededInitialProximity = true;
+
+    const userPoint = point([longitude, latitude]);
+    for (const tim of this.activeTims) {
+      const bufferedGeom = this.bufferedCache.get(tim.id);
+      if (!bufferedGeom || !booleanPointInPolygon(userPoint, bufferedGeom)) continue;
+      this.alertedIds.add(tim.id);
+      try {
+        if (booleanPointInPolygon(userPoint, polygon(tim.geometry.coordinates))) {
+          this.activeInsideIds.add(tim.id);
+        }
+      } catch {}
+    }
+  }
+
   // Ambient (non-navigating) proximity check: a zone only alerts once, while the
   // user is within its buffer AND actually heading toward it — not on buffer entry alone.
   checkProximity(latitude: number, longitude: number, heading: number | null): void {
     if (!this.activeTims.length) return;
+    this.primeIfNeeded(latitude, longitude);
 
     const userPoint = point([longitude, latitude]);
     const nowInBuffer = new Set<number>();
     const newDistances = new Map<number, number>();
     const newNearby: NearbyByCategory = { safety: null, regulatory: null, informational: null };
-    const isSeedPass = !this.hasSeededInitialProximity;
-    this.hasSeededInitialProximity = true;
 
     for (const tim of this.activeTims) {
       let distMi: number | undefined;
@@ -166,11 +187,7 @@ export class TimService {
           this.activeInsideIds.delete(tim.id);
         }
 
-        if (isSeedPass) {
-          // Already inside the buffer the moment monitoring started — mark it
-          // seen without alerting, don't treat "was already true" as an approach.
-          this.alertedIds.add(tim.id);
-        } else if (!this.alertedIds.has(tim.id) && headingOk) {
+        if (!this.alertedIds.has(tim.id) && headingOk) {
           this.alertedIds.add(tim.id);
           this.triggerAlert(tim);
         }

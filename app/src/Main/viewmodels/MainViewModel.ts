@@ -1,6 +1,6 @@
 // app/src/Main/viewmodels/MainViewModel.ts
 
-import { makeAutoObservable } from 'mobx';
+import { makeAutoObservable, reaction } from 'mobx';
 import { Coordinate } from '../../features/Map/models/Location';
 import { MapViewModel } from '../../features/Map/viewmodels/MapViewModel';
 import { PedestrianDetectorViewModel } from '../../features/PedestrianDetector/viewmodels/PedestrianDetectorViewModel';
@@ -14,6 +14,8 @@ import { SpatZoneService } from '../../features/SpatService/services/SpatZoneSer
 import { TimService } from '../../features/TIM/services/TimService';
 import { SettingsViewModel } from '../../features/UI/viewmodels/SettingsViewModel';
 import { RouteViewModel } from '../../features/Route/viewmodels/RouteViewModel';
+import { PreemptionViewModel } from '../../features/preemption/viewModels/PreemptionViewModel';
+import { VoiceGuidanceService } from '../../features/Route/services/VoiceGuidanceService';
 
 export class MainViewModel {
   mapViewModel: MapViewModel;
@@ -26,6 +28,13 @@ export class MainViewModel {
   timService: TimService;
   settingsViewModel: SettingsViewModel;
   routeViewModel: RouteViewModel;
+  // Owned here (not locally inside MapView) so isEnabled/sessionId survive
+  // MainScreen swapping MapViewComponent out for RoutePreviewMapScreen
+  // during route preview — that swap unmounts MapViewComponent, and a
+  // locally-created instance would get destroyed and recreated (isEnabled
+  // reset to false) every time, silently disarming auto-preemption on every
+  // route preview. Also lets SettingsScreen read/toggle the same instance.
+  preemptionViewModel: PreemptionViewModel;
   private positionSyncInterval: NodeJS.Timeout | null = null;
   private zoneRefreshInterval: NodeJS.Timeout | null = null;
   
@@ -39,6 +48,7 @@ export class MainViewModel {
     this.timService = new TimService();
     this.settingsViewModel = new SettingsViewModel();
     this.routeViewModel = new RouteViewModel(this.timService);
+    this.preemptionViewModel = new PreemptionViewModel();
     
     if (TESTING_CONFIG.USE_TESTING_MODE) {
       this.testingPedestrianDetectorViewModel = new TestingPedestrianDetectorViewModel();
@@ -52,7 +62,27 @@ export class MainViewModel {
     
     this.directionGuideViewModel = new DirectionGuideViewModel();
     makeAutoObservable(this);
-    
+
+    // Central wiring point for the settings → imperative-service voice
+    // selection (see VoiceGuidanceService's activeVoiceId comment for why
+    // it isn't threaded through every call site instead). fireImmediately
+    // so a non-default voice chosen in a previous session — once settings
+    // persistence exists — takes effect from the first announcement, not
+    // only after the user revisits Settings.
+    reaction(
+      () => this.settingsViewModel.voiceIdentifier,
+      (voiceId) => VoiceGuidanceService.setVoice(voiceId),
+      { fireImmediately: true },
+    );
+
+    // Touches the TTS engine as early as possible so it's already
+    // initialized by the time the user might open Settings' Voice picker —
+    // see the race condition explained on VoiceGuidanceService.warmUp/
+    // getAvailableVoices. Without this, a fresh install where Settings is
+    // one of the first screens visited can show an empty voice list even
+    // though the device has real ones installed.
+    VoiceGuidanceService.warmUp();
+
     this.startApisOnLaunch();
     this.startPedestrianMonitoring();
     this.startSpatMonitoring();
@@ -68,6 +98,7 @@ export class MainViewModel {
   
   private startApisOnLaunch(): void {
     this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
+    this.vehicleDisplayViewModel.setShowAllRegardlessOfDistance(this.settingsViewModel.sdsmShowAllRegardlessOfDistance);
     if (TESTING_CONFIG.ENABLE_SDSM_API) {
       this.vehicleDisplayViewModel.setApiUrl('georgia');
       this.vehicleDisplayViewModel.start();
@@ -112,6 +143,7 @@ export class MainViewModel {
           this.userLocation.longitude
         ]);
         this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
+        this.vehicleDisplayViewModel.setShowAllRegardlessOfDistance(this.settingsViewModel.sdsmShowAllRegardlessOfDistance);
 
         this.spatViewModel.startMonitoring();
 
@@ -121,6 +153,11 @@ export class MainViewModel {
             this.spatViewModel.setUserPosition([latitude, longitude]);
             this.vehicleDisplayViewModel.setUserLocation([latitude, longitude]);
             this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
+            this.vehicleDisplayViewModel.setShowAllRegardlessOfDistance(this.settingsViewModel.sdsmShowAllRegardlessOfDistance);
+            // Unconditional (not gated on moving/navigating) so this reflects
+            // actual app boot rather than "wherever the user happened to be
+            // the first time they started driving off-nav" — see TimService.
+            this.timService.primeIfNeeded(latitude, longitude);
             if (!this.routeViewModel.isNavigating && this.mapViewModel.isMoving) {
               // While navigating, RouteViewModel alerts only for zones the route
               // actually crosses (see RouteViewModel.checkTimZoneAlerts). While
@@ -217,6 +254,7 @@ export class MainViewModel {
     this.routeViewModel.clearRoute();
     this.spatViewModel.cleanup();
     this.timService.stop();
+    this.preemptionViewModel.destroy();
 
     if (this.isTestingMode && this.testingPedestrianDetectorViewModel) {
       this.testingPedestrianDetectorViewModel.cleanup();

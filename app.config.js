@@ -3,6 +3,7 @@ module.exports = {
     name: 'V2X Connect',
     slug: 'v2xmobile',
     scheme: 'v2xmobile',
+    version: '1.0.9',
     plugins: [
       [
         'expo-location',
@@ -29,6 +30,7 @@ module.exports = {
     },
     android: {
       package: 'com.yosifmohamedain.mapboxapp',
+      versionCode: 16,
       permissions: [
         'ACCESS_FINE_LOCATION',
         'ACCESS_COARSE_LOCATION',

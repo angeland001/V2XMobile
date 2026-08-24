@@ -92,6 +92,12 @@ class TimZoneScreen(carContext: CarContext) : Screen(carContext) {
                     .setTitle(badge.label)
                     .addText(badge.distanceText)
                     .setImage(icon)
+                    // Badges are otherwise persistent (no auto-expire) — a tap
+                    // is the driver's own way to dismiss one. Forwarded to JS,
+                    // which pushes back an updated badge set; the row actually
+                    // disappearing happens through that same round trip every
+                    // other state change already goes through, not here.
+                    .setOnClickListener { CarAppBridge.notifyBadgeTapped(badge.category, badge.timId) }
                     .build()
             )
         }

@@ -1,6 +1,9 @@
 import React from 'react';
-import { LayoutChangeEvent, Pressable, StyleSheet, Text, View } from 'react-native';
+import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
+import { ROUTE_COLORS, ROUTE_FONTS } from '../../UI/appTheme';
+import { ToggleSwitch } from '../../UI/components/ToggleSwitch';
 
 interface PreemptionToggleProps {
   enabled: boolean;
@@ -21,13 +24,19 @@ export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onT
       style={[styles.container, dockRight ? styles.containerRight : styles.containerLeft, { top }]}
       onLayout={onLayout}
     >
-      <Text style={[styles.label, isTablet && styles.labelTablet]}>Auto Preemption</Text>
-      <Pressable
-        style={[styles.toggle, isTablet && styles.toggleTablet, enabled ? styles.toggleOn : styles.toggleOff]}
-        onPress={() => onToggle(!enabled)}
-      >
-        <View style={[styles.thumb, isTablet && styles.thumbTablet, enabled ? styles.thumbOn : styles.thumbOff]} />
-      </Pressable>
+      {/* Amber border/icon while armed mirrors PreemptionStatusBanner's
+          "requesting" accent — same color reads as "system will act" in
+          both places instead of the toggle using its own unrelated palette. */}
+      <View style={[styles.label, isTablet && styles.labelTablet, enabled && styles.labelArmed]}>
+        <Ionicons
+          name="flash"
+          size={isTablet ? 15 : 12}
+          color={enabled ? ROUTE_COLORS.amber : 'rgba(255,255,255,0.55)'}
+          style={styles.labelIcon}
+        />
+        <Text style={[styles.labelText, isTablet && styles.labelTextTablet]}>Auto Preemption</Text>
+      </View>
+      <ToggleSwitch enabled={enabled} onToggle={onToggle} isTablet={isTablet} />
     </View>
   );
 };
@@ -46,58 +55,32 @@ const styles = StyleSheet.create({
     right: 16,
   },
   label: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
-    backgroundColor: 'rgba(15, 23, 42, 0.72)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(27, 29, 34, 0.8)',
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  labelArmed: {
+    borderColor: ROUTE_COLORS.amberBorder,
   },
   labelTablet: {
-    fontSize: 15,
     paddingHorizontal: 16,
     paddingVertical: 7,
   },
-  toggle: {
-    width: 56,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    paddingHorizontal: 2,
-    elevation: 3,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
+  labelIcon: {
+    marginRight: 6,
   },
-  toggleTablet: {
-    width: 72,
-    height: 40,
-    borderRadius: 20,
+  labelText: {
+    fontFamily: ROUTE_FONTS.bodySemiBold,
+    color: '#ffffff',
+    fontSize: 12,
   },
-  toggleOn: {
-    backgroundColor: '#10b981',
-  },
-  toggleOff: {
-    backgroundColor: '#6b7280',
-  },
-  thumb: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#ffffff',
-  },
-  thumbTablet: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-  },
-  thumbOn: {
-    alignSelf: 'flex-end',
-  },
-  thumbOff: {
-    alignSelf: 'flex-start',
+  labelTextTablet: {
+    fontSize: 15,
   },
 });
 
