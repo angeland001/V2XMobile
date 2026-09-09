@@ -30,7 +30,7 @@ export const PreemptionButton: React.FC<PreemptionButtonProps> = ({
         onPress={onPress}
         disabled={disabled}
       >
-        <Text style={styles.buttonText}>Request Preemption</Text>
+        <Text style={styles.buttonText}>Request Priority</Text>
       </Pressable>
     </View>
   );

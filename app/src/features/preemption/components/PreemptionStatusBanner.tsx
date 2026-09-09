@@ -4,6 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { SsmStatus } from '../models/PreemptionModels';
 import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 import { ROUTE_COLORS, ROUTE_FONTS } from '../../UI/appTheme';
+import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
 
 interface PreemptionStatusBannerProps {
   ssmStatus?: SsmStatus;
@@ -28,6 +29,10 @@ interface PreemptionStatusBannerProps {
   // True in the window right after /preempt/start comes back
   // empty/errored — same rising-edge flash treatment as clearConfirmed.
   startFailed?: boolean;
+  // Wall-clock ms timestamp of the rising edge into 'granted', from
+  // PreemptionViewModel.grantedAt. Drives the elapsed-time readout below the
+  // GRANTED label. null when not in a granted session.
+  grantedAt?: number | null;
   top?: number;
   left?: number;
   navOffset?: number;
@@ -51,18 +56,27 @@ const MIN_STATE_DWELL_MS = 600;
 // slow-to-arrive response still has time to land, not so the flash lingers.
 const FLASH_DISPLAY_MS = 3000;
 
+// m:ss count-up for the granted-timer display. Not added to the shared
+// core/utils/formatters.ts (formatDuration there is "X hr Y min" — no other
+// caller needs a short mm:ss form) — single caller, kept local.
+function formatElapsed(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 const STATE_CONFIG: Record<BannerState, {
   label: string;
   color: string;
   icon: keyof typeof Ionicons.glyphMap;
   pulse: boolean;
 }> = {
-  requesting:  { label: 'PREEMPTION REQUESTED', color: ROUTE_COLORS.amber,   icon: 'radio-outline',           pulse: true },
-  granted:     { label: 'PREEMPTION GRANTED',   color: ROUTE_COLORS.signal,  icon: 'checkmark-circle',        pulse: false },
-  cancelled:   { label: 'PREEMPTION LOST',      color: ROUTE_COLORS.danger,  icon: 'close-circle',            pulse: false },
+  requesting:  { label: 'PRIORITY REQUESTED',   color: ROUTE_COLORS.amber,   icon: 'radio-outline',           pulse: true },
+  granted:     { label: 'PRIORITY GRANTED',     color: ROUTE_COLORS.signal,  icon: 'checkmark-circle',        pulse: false },
+  cancelled:   { label: 'PRIORITY LOST',        color: ROUTE_COLORS.danger,  icon: 'close-circle',            pulse: false },
   stale:       { label: 'STATUS UNCONFIRMED',   color: ROUTE_COLORS.amber,   icon: 'help-circle-outline',     pulse: true },
   unconfirmed: { label: 'CLEAR NOT CONFIRMED',  color: ROUTE_COLORS.preempt, icon: 'alert-circle-outline',    pulse: false },
-  cleared:     { label: 'PREEMPTION CLEARED',   color: ROUTE_COLORS.signal,  icon: 'checkmark-done-circle',   pulse: false },
+  cleared:     { label: 'PRIORITY CLEARED',     color: ROUTE_COLORS.signal,  icon: 'checkmark-done-circle',   pulse: false },
   failed:      { label: 'REQUEST FAILED',       color: ROUTE_COLORS.danger,  icon: 'warning',                 pulse: false },
 };
 
@@ -110,6 +124,7 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
   clearUnconfirmed = false,
   clearConfirmed = false,
   startFailed = false,
+  grantedAt = null,
   top,
   left = 16,
   navOffset = 0,
@@ -178,6 +193,11 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
     };
   }, [state]);
 
+  // Keyed off renderedState (not the raw ssmStatus prop) so the timer starts
+  // once the banner has actually settled into showing GRANTED — after the
+  // MIN_STATE_DWELL_MS dwell above — not the instant the underlying state flips.
+  const elapsedSeconds = useElapsedSeconds(renderedState === 'granted', grantedAt);
+
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
@@ -231,6 +251,11 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
           >
             {config.label}
           </Text>
+          {renderedState === 'granted' ? (
+            <Text style={[styles.elapsedText, isTablet && styles.elapsedTextTablet]} numberOfLines={1}>
+              {formatElapsed(elapsedSeconds)}
+            </Text>
+          ) : null}
           {intersectionName ? (
             <Text style={[styles.nameText, isTablet && styles.nameTextTablet]} numberOfLines={1}>
               {intersectionName}
@@ -309,6 +334,15 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   nameTextTablet: {
+    fontSize: 12,
+  },
+  elapsedText: {
+    fontFamily: ROUTE_FONTS.mono,
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 9,
+    marginTop: 2,
+  },
+  elapsedTextTablet: {
     fontSize: 12,
   },
 });

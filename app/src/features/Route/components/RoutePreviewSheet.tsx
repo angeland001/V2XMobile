@@ -191,17 +191,17 @@ export const RoutePreviewSheet: React.FC<RoutePreviewSheetProps> = observer(
           {routeVM.preemptionHits.length > 0 && (
             <View style={styles.zoneSection}>
               <Text style={styles.zoneSectionLabel}>
-                PREEMPTION ZONES ({routeVM.preemptionHits.length})
+                PRIORITY ZONES ({routeVM.preemptionHits.length})
               </Text>
               <Text style={styles.preemptSectionNote}>
-                These intersections are configured for signal preemption.
+                These intersections are configured for signal priority.
               </Text>
               {routeVM.preemptionHits.map((hit: PreemptionHit) => (
                 <View key={hit.zoneId} style={[styles.timDetailCard, { borderLeftColor: ROUTE_COLORS.preempt }]}>
                   <View style={styles.timCategoryPill}>
                     <Ionicons name="flash" size={11} color={ROUTE_COLORS.preempt} />
                     <Text style={[styles.timCategoryLabel, { color: ROUTE_COLORS.preempt }]}>
-                      SIGNAL PREEMPTION
+                      SIGNAL PRIORITY
                     </Text>
                   </View>
                   <Text style={styles.timTypeLabel}>{hit.zoneName}</Text>
@@ -213,7 +213,7 @@ export const RoutePreviewSheet: React.FC<RoutePreviewSheetProps> = observer(
           {routeVM.timHits.length === 0 && routeVM.preemptionHits.length === 0 && (
             <View style={styles.timClearRow}>
               <Ionicons name="checkmark-circle-outline" size={13} color={ROUTE_COLORS.signal} />
-              <Text style={styles.timClearText}>No TIM or preemption zones on this route</Text>
+              <Text style={styles.timClearText}>No TIM or priority zones on this route</Text>
             </View>
           )}
         </ScrollView>

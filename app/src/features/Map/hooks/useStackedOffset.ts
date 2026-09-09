@@ -38,6 +38,15 @@ export function useStackedOffset(order: readonly string[], gap: number = 8) {
     [heights, order, gap],
   );
 
+  // Real measured height of one stack member — lets a caller outside the
+  // top-down offsetFor chain (e.g. a bottom-anchored sibling that needs to
+  // sit just above one specific member) position off the same measurements
+  // instead of a guessed constant.
+  const heightFor = useCallback(
+    (key: string): number => heights[key] ?? 0,
+    [heights],
+  );
+
   // Sum of every member's real height plus the gaps between them — lets a
   // caller center the whole stack as one block instead of anchoring it to
   // a fixed edge.
@@ -50,7 +59,7 @@ export function useStackedOffset(order: readonly string[], gap: number = 8) {
     return total;
   }, [heights, order, gap]);
 
-  return { onLayout, offsetFor, resetHeight, totalHeight };
+  return { onLayout, offsetFor, resetHeight, totalHeight, heightFor };
 }
 
 export default useStackedOffset;

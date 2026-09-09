@@ -14,6 +14,17 @@ export class PreemptionViewModel {
   sessionId: string | null = null;
   insideZone = false;
   ssmStatus: SsmStatus = null;
+  // Wall-clock ms timestamp of the rising edge into 'granted' — null whenever
+  // ssmStatus isn't 'granted'. Purely for PreemptionStatusBanner's client-side
+  // elapsed-timer display; never sent to the backend.
+  grantedAt: number | null = null;
+  // The dashboard's configured preempt-duration bounds (NTCIP minDuration_s/
+  // maxOut_s) for the active session's zone, fetched once per grant via
+  // PreemptionConfigService.fetchTimingBounds — see startPreemption. null
+  // until that fetch resolves, or if the zone has no controller/timing data
+  // configured. Drives PreemptionCountdown's "time remaining" readout;
+  // reset in lockstep with grantedAt by setSsmStatus below.
+  timingBounds: { minDurationS: number | null; maxOutS: number | null } | null = null;
   activeZoneName: string | null = null;
   // Timestamp of the current 1.5s heartbeat cycle's start. No longer read by
   // any UI (previously drove a progress-bar animation that's since been
@@ -90,6 +101,20 @@ export class PreemptionViewModel {
     this.configSyncInterval = setInterval(() => {
       this.syncConfigsWithDashboard();
     }, this.CONFIG_SYNC_INTERVAL_MS);
+  }
+
+  // Centralizes ssmStatus writes so grantedAt (rising edge into 'granted') and
+  // its reset (any transition away from 'granted') can never drift out of
+  // sync — the alternative is duplicating that edge comparison at every call
+  // site below.
+  private setSsmStatus(status: SsmStatus): void {
+    if (status === 'granted' && this.ssmStatus !== 'granted') {
+      this.grantedAt = Date.now();
+    } else if (status !== 'granted') {
+      this.grantedAt = null;
+      this.timingBounds = null;
+    }
+    this.ssmStatus = status;
   }
 
   toggleEnabled(enabled: boolean): void {
@@ -215,7 +240,7 @@ export class PreemptionViewModel {
     }
 
     runInAction(() => {
-      this.ssmStatus = 'requesting';
+      this.setSsmStatus('requesting');
       this.activeZoneName = zone.name;
       // A fresh attempt supersedes any leftover failure flag from a previous
       // one — don't let an old "request failed" linger through a new try.
@@ -242,6 +267,15 @@ export class PreemptionViewModel {
     console.log('[Preemption] SRM Payload:', JSON.stringify(srmPayload, null, 2));
     console.log('[Preemption] Expected controller_ip:', config.controllerIp, '| signalGroup:', config.signalGroup);
 
+    // Tag + forward this SRM to the N-V2X Kafka ingest so the dashboard's
+    // Demo Day map/timeline can show it. Best-effort and non-blocking — the
+    // actual controller preemption (below) must not wait on or fail because
+    // of this side channel. this.previousPosition already reflects the
+    // entry-triggering GPS fix: syncPosition sets it synchronously right
+    // after calling startPreemption(), before this function's first await
+    // (fetchConfigBySpatZoneId) resumes.
+    this.postNv2xSrm(config, srmPayload);
+
     // Call START with SRM payload
     console.log('[Preemption] Calling /preempt/start for zone:', zone.name);
     const result = await this.callStart(srmPayload);
@@ -249,7 +283,7 @@ export class PreemptionViewModel {
       this.isPendingStart = false;
       if (result) {
         this.sessionId = result.sessionId;
-        this.ssmStatus = result.ssmStatus;
+        this.setSsmStatus(result.ssmStatus);
         this.requestedSignalGroup = config.signalGroup;
         this.requestedPreemptChannel = config.preemptChannel;
         this.controllerSignalState = null;
@@ -264,7 +298,7 @@ export class PreemptionViewModel {
         );
         // Heartbeat will be started in syncPosition
       } else {
-        this.ssmStatus = null;
+        this.setSsmStatus(null);
         this.activeZoneName = null;
         this.lastStartFailed = true;
         this.lastStartFailedZoneName = zone.name;
@@ -276,6 +310,20 @@ export class PreemptionViewModel {
       }
     });
     if (!result) this.scheduleStartFailedExpiry();
+
+    // Fetch the dashboard's configured duration bounds for PreemptionCountdown
+    // once per grant — fire-and-forget, not awaited, since it must never delay
+    // showing "granted." Guarded on sessionId so a slow response can't clobber
+    // a newer session's state if the driver has already left/re-entered by
+    // the time it resolves.
+    if (result && result.ssmStatus === 'granted') {
+      const sessionId = result.sessionId;
+      PreemptionConfigService.fetchTimingBounds(config.id).then((bounds) => {
+        runInAction(() => {
+          if (this.sessionId === sessionId) this.timingBounds = bounds;
+        });
+      });
+    }
   }
 
   private scheduleStartFailedExpiry(): void {
@@ -300,6 +348,23 @@ export class PreemptionViewModel {
     this.heartbeatInterval = setInterval(() => {
       if (this.sessionId && this.insideZone && this.isEnabled) {
         this.callHeartbeat(this.sessionId);
+
+        // Re-post position on the same cadence so the dashboard's map shows
+        // real-time movement through the zone, not just a single ping at
+        // entry. previousPosition is kept current by every syncPosition()
+        // call (GPS updates), independent of this timer.
+        const config = this.trackedZoneId ? this.configCache.get(this.trackedZoneId) : null;
+        if (config && config.signalGroup !== null) {
+          const laneId =
+            Array.isArray(config.laneIds) && config.laneIds.length > 0 ? config.laneIds[0] : 0;
+          const srmPayload = PreemptionApiService.buildSrmPayload(
+            config.intersectionId,
+            config.signalGroup,
+            laneId,
+          );
+          this.postNv2xSrm(config, srmPayload);
+        }
+
         // Reset cycle so the progress bar restarts from 0
         runInAction(() => {
           this.heartbeatCycleStart = Date.now();
@@ -359,7 +424,7 @@ export class PreemptionViewModel {
 
     // Reset session state
     this.sessionId = null;
-    this.ssmStatus = null;
+    this.setSsmStatus(null);
     this.activeZoneName = null;
     this.requestedSignalGroup = null;
     this.requestedPreemptChannel = null;
@@ -420,6 +485,32 @@ export class PreemptionViewModel {
   }
 
   // ============ API Calls (Mocks for now) ============
+
+  private async postNv2xSrm(config: PreemptionZoneConfig, srm: SrmPayload): Promise<void> {
+    if (!config.nv2xSlug) {
+      console.log('[Preemption] Skipping N-V2X SRM ingest — no nv2x_slug configured for zone:', config.name);
+      return;
+    }
+    const position = this.previousPosition;
+    if (!position) return;
+
+    const [lat, lon] = position;
+    const payload = PreemptionApiService.buildNv2xIngestPayload(config.nv2xSlug, lat, lon, srm);
+    console.log('[Preemption] POST N-V2X SRM ingest:', JSON.stringify(payload));
+
+    try {
+      const response = await fetch(API_CONFIG.NV2X_SRM_INGEST_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      console.log('[Preemption] N-V2X SRM ingest response status:', response.status);
+    } catch (error) {
+      // Non-critical — the dashboard visualization lagging or missing a
+      // beat must never block or fail the actual preemption request.
+      console.log('[Preemption] N-V2X SRM ingest failed (non-critical):', error);
+    }
+  }
 
   private async callStart(payload: SrmPayload): Promise<{ sessionId: string; ssmStatus: 'granted' | 'cancelled' } | null> {
     console.log('[API] POST /preempt/start');
@@ -486,7 +577,7 @@ export class PreemptionViewModel {
           console.log('[API] HB | ok:', data.ok, '| detail:', data.detail, '| preempt_channel:', data.preempt_channel, '| current_state:', data.current_state);
           const status = data?.ssm?.value?.[1]?.status as 'granted' | 'cancelled' | undefined;
           if (status && status !== this.ssmStatus) {
-            runInAction(() => { this.ssmStatus = status; });
+            runInAction(() => { this.setSsmStatus(status); });
           }
           this.lastHeartbeatSuccessAt = Date.now();
           runInAction(() => {

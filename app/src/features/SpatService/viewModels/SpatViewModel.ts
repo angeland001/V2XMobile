@@ -365,6 +365,17 @@ export class SpatViewModel {
     return this.formatPhaseDuration(SpatApiService.getPhaseTimingForGroup(data ?? {}, signalGroup));
   }
 
+  // Diagnostic-only counterpart to getDisplayPhaseDurationLabelForGroup —
+  // returns the raw (unrounded, unlabeled) minS/maxS pair so a caller can log
+  // exact numbers to verify the seconds-vs-deciseconds unit assumption noted
+  // on SpatApiService.getPhaseTimingForGroup. Not for UI use.
+  getRawPhaseTimingForGroup(signalGroup: number | null): { minRaw: number; maxRaw: number } | null {
+    if (signalGroup === null) return null;
+    const data = this.shouldShowDisplay ? this.rawSpatData : this.lastRawSpatData;
+    const timing = SpatApiService.getPhaseTimingForGroup(data ?? {}, signalGroup);
+    return timing ? { minRaw: timing.minS, maxRaw: timing.maxS } : null;
+  }
+
   private formatPhaseDuration(timing: { minS: number; maxS: number } | null): string {
     if (!timing || timing.maxS <= 0) return '--';
 

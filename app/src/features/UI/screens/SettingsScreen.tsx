@@ -293,19 +293,19 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
           />
         </View>
 
-        <Text style={styles.sectionLabel}>PREEMPTION</Text>
+        <Text style={styles.sectionLabel}>PRIORITY</Text>
         <View style={styles.card}>
           <ToggleRow
             icon="flash"
-            label="Auto Preemption"
-            sublabel="Arm automatic signal preemption requests"
+            label="Auto Priority"
+            sublabel="Arm automatic signal priority requests"
             value={preemptionViewModel.isEnabled}
             onToggle={(v) => { preemptionViewModel.toggleEnabled(v); }}
           />
           <View style={styles.cardDivider} />
           <ToggleRow
             icon="flash-outline"
-            label="Preemption Status Banner"
+            label="Priority Status Banner"
             sublabel="Show requested / granted / cleared status"
             value={settingsViewModel.preemptionBannerEnabled}
             onToggle={(v) => { settingsViewModel.preemptionBannerEnabled = v; }}
@@ -313,7 +313,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
           <View style={styles.cardDivider} />
           <ToggleRow
             icon="volume-high-outline"
-            label="Preemption Voice Alerts"
+            label="Priority Voice Alerts"
             sublabel="Spoken cue on request, grant, and clear"
             value={settingsViewModel.preemptionVoiceAlerts}
             onToggle={(v) => { settingsViewModel.preemptionVoiceAlerts = v; }}
@@ -321,7 +321,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
           <View style={styles.cardDivider} />
           <SegmentedRow
             icon="flash-outline"
-            label="Preemption Zones"
+            label="Priority Zones"
             sublabel="Full overlay, icon only, or hidden"
             value={settingsViewModel.preemptionZoneDisplay}
             segments={ZONE_DISPLAY_SEGMENTS}

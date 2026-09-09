@@ -34,7 +34,7 @@ export const PreemptionToggle: React.FC<PreemptionToggleProps> = ({ enabled, onT
           color={enabled ? ROUTE_COLORS.amber : 'rgba(255,255,255,0.55)'}
           style={styles.labelIcon}
         />
-        <Text style={[styles.labelText, isTablet && styles.labelTextTablet]}>Auto Preemption</Text>
+        <Text style={[styles.labelText, isTablet && styles.labelTextTablet]}>Auto Priority</Text>
       </View>
       <ToggleSwitch enabled={enabled} onToggle={onToggle} isTablet={isTablet} />
     </View>

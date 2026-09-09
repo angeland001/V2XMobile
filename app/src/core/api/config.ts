@@ -39,4 +39,13 @@ export const API_CONFIG = {
   // Pointing straight at https avoids the redirect (and the method loss).
   PREEMPTION_API_URL: 'https://roadaware.cuip.research.utc.edu/preemptapi',
   PREEMPTION_HOST: 'roadaware.cuip.research.utc.edu',
+
+  // N-V2X SRM ingest (Kafka-backed) — confirmed with the dashboard team,
+  // 2026-09. Tags each preemption request with position + vehicle type so
+  // the Kepler dashboard's Demo Day map/timeline can show it. Routed
+  // through the same public VM as PREEMPTION_API_URL/DASHBOARD_API_URL.
+  NV2X_SRM_INGEST_URL: 'https://roadaware.cuip.research.utc.edu/nv2x-srm/api/v1/srm',
+  // TODO: make this configurable if the app ever supports non-emergency
+  // preemption vehicles — hardcoded for now since this app is EV-only today.
+  NV2X_VEHICLE_TYPE: 'emergency',
 };

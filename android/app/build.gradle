@@ -91,7 +91,7 @@ android {
         applicationId 'com.yosifmohamedain.mapboxapp'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 16
+        versionCode 24
         versionName "1.0.9"
         manifestPlaceholders = [
             GOOGLE_MAPS_API_KEY: project.findProperty("GOOGLE_MAPS_API_KEY") ?: System.getenv("EXPO_PUBLIC_GOOGLE_MAPS_API_KEY") ?: ""

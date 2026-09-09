@@ -4,6 +4,7 @@ import { TimService } from '../TIM/services/TimService';
 import { RouteViewModel } from '../Route/viewmodels/RouteViewModel';
 import { SettingsViewModel } from '../UI/viewmodels/SettingsViewModel';
 import { TimCategory } from '../TIM/models/TimTypes';
+import { formatTimType, formatDate } from '../UI/utils/timFormatting';
 
 // Well under TimZoneScreen.kt's BRIDGE_STALE_MS (8000ms), so a badge set that
 // holds steady still keeps the native watchdog from flipping to
@@ -14,9 +15,9 @@ const KEEPALIVE_INTERVAL_MS = 3000;
 // Auto zone-alert screen — see TimZoneScreen.kt's Row.setOnClickListener.
 const TAP_EVENT = 'CarBridgeTimZoneTapped';
 
-// Fixed display order regardless of distance, so the native row order never
-// jitters as zones come and go — matches the red/yellow/blue reading order
-// used everywhere else in the app (TimToast's CATEGORY_STYLE, SeverityDots).
+// Base iteration order for building candidates below — no longer the final
+// display order (see compareUrgency/selectVisibleBadges), just a stable seed
+// so equally-urgent categories keep a consistent relative position.
 const CATEGORY_ORDER: TimCategory[] = ['safety', 'regulatory', 'informational'];
 
 const CATEGORY_COLOR: Record<TimCategory, 'red' | 'yellow' | 'blue'> = {
@@ -25,10 +26,12 @@ const CATEGORY_COLOR: Record<TimCategory, 'red' | 'yellow' | 'blue'> = {
   informational: 'blue',
 };
 
+// Top-level category name shown on each badge's secondary line, alongside
+// distance/severity — matches the dashboard's own TIM_CATEGORY_LABELS.
 const CATEGORY_LABEL: Record<TimCategory, string> = {
-  safety: 'Safety Zone',
-  regulatory: 'Regulatory Zone',
-  informational: 'Info Zone',
+  safety: 'Safety',
+  regulatory: 'Regulatory',
+  informational: 'Informational',
 };
 
 interface CarBadge {
@@ -38,8 +41,20 @@ interface CarBadge {
   // than the whole category (see the tap listener below).
   timId: number;
   color: string;
+  // The zone's specific sub-type (e.g. "Work Zone Warning") — this is the
+  // row's title on the car screen, not the top-level category.
   label: string;
+  // Top-level category (e.g. "Safety") — rendered on the secondary line
+  // alongside distance/severity, since the title now carries the sub-type.
+  categoryLabel: string;
   distanceText: string;
+  // "Active until <date>" / "Active indefinitely" — replaces the API
+  // description on the car display (Row only has room for 2 body lines, and
+  // expiry is more actionable for a driver than the operator's free text).
+  durationText: string;
+  // Drives TimZoneScreen.kt's trailing numeral decoration (1-5), same scale
+  // as SeverityDots elsewhere in the app.
+  severity: number;
 }
 
 // The single best candidate per category, merged from whichever source is
@@ -51,6 +66,24 @@ interface CategoryCandidate {
   timType: string;
   inside: boolean;
   distanceM: number; // 0 (unused) when inside
+  validUntil: string | null;
+  severity: number;
+}
+
+// Ranks candidates by urgency for on-screen ordering: being inside a zone
+// outranks merely approaching one, then higher severity, then closer
+// distance. TimZoneScreen.kt/the car-app Row API give every row the same
+// fixed size (no per-row font/height control), so list position is the only
+// real way to make the most urgent zone stand out.
+function compareUrgency(a: CategoryCandidate, b: CategoryCandidate): number {
+  if (a.inside !== b.inside) return a.inside ? -1 : 1;
+  if (a.severity !== b.severity) return b.severity - a.severity;
+  return a.distanceM - b.distanceM;
+}
+
+function formatDurationText(validUntil: string | null): string {
+  const formatted = formatDate(validUntil);
+  return formatted ? `Active until ${formatted}` : 'Active indefinitely';
 }
 
 function formatDistanceMeters(m: number): string {
@@ -68,8 +101,11 @@ function toBadge(category: TimCategory, candidate: CategoryCandidate): CarBadge 
     category,
     timId: candidate.timId,
     color: CATEGORY_COLOR[category],
-    label: CATEGORY_LABEL[category],
+    label: formatTimType(candidate.timType),
+    categoryLabel: CATEGORY_LABEL[category],
     distanceText: candidate.inside ? 'In Zone' : `${formatDistanceMeters(candidate.distanceM)} ahead`,
+    durationText: formatDurationText(candidate.validUntil),
+    severity: candidate.severity,
   };
 }
 
@@ -102,7 +138,7 @@ export function startTimCarBridge(
       // surfaces them to the car display.
       for (const hit of routeViewModel.insideTimZones) {
         if (!result[hit.category]) {
-          result[hit.category] = { timId: hit.timId, timType: hit.timType, inside: true, distanceM: 0 };
+          result[hit.category] = { timId: hit.timId, timType: hit.timType, inside: true, distanceM: 0, validUntil: hit.validUntil, severity: hit.severity };
         }
       }
       for (const hit of routeViewModel.approachingTimZones) {
@@ -111,7 +147,7 @@ export function startTimCarBridge(
         if (distanceM == null) continue;
         const current = result[hit.category];
         if (!current || distanceM < current.distanceM) {
-          result[hit.category] = { timId: hit.timId, timType: hit.timType, inside: false, distanceM };
+          result[hit.category] = { timId: hit.timId, timType: hit.timType, inside: false, distanceM, validUntil: hit.validUntil, severity: hit.severity };
         }
       }
     } else {
@@ -126,6 +162,8 @@ export function startTimCarBridge(
           timType: nearby.timType,
           inside: nearby.inside,
           distanceM: nearby.distanceMi * 1609.34,
+          validUntil: nearby.validUntil,
+          severity: nearby.severity,
         };
       }
     }
@@ -137,9 +175,10 @@ export function startTimCarBridge(
   // the driver taps it away on the Android Auto screen (dismissedByCategory,
   // set by the tap listener below) or the zone itself drops out of
   // candidacy entirely (left the buffer, no longer heading toward it, or
-  // actually exited it).
+  // actually exited it). Final display order is by urgency (compareUrgency),
+  // not by category — the most severe/closest zone always leads.
   const selectVisibleBadges = (candidates: Partial<Record<TimCategory, CategoryCandidate>>): CarBadge[] => {
-    const badges: CarBadge[] = [];
+    const entries: { category: TimCategory; candidate: CategoryCandidate }[] = [];
 
     for (const category of CATEGORY_ORDER) {
       const candidate = candidates[category];
@@ -154,10 +193,12 @@ export function startTimCarBridge(
       // check above already wouldn't match) confuse later reads.
       dismissedByCategory.delete(category);
 
-      badges.push(toBadge(category, candidate));
+      entries.push({ category, candidate });
     }
 
-    return badges;
+    entries.sort((a, b) => compareUrgency(a.candidate, b.candidate));
+
+    return entries.map(({ category, candidate }) => toBadge(category, candidate));
   };
 
   // Log only when the active badge set actually changes — the keepalive

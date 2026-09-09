@@ -1,11 +1,15 @@
 package com.yosifmohamedain.mapboxapp.carapp
 
+import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.text.SpannableString
+import android.text.Spanned
 import androidx.car.app.CarContext
 import androidx.car.app.Screen
 import androidx.car.app.model.CarColor
 import androidx.car.app.model.CarIcon
+import androidx.car.app.model.ForegroundCarColorSpan
 import androidx.car.app.model.Header
 import androidx.car.app.model.ItemList
 import androidx.car.app.model.ListTemplate
@@ -83,14 +87,55 @@ class TimZoneScreen(carContext: CarContext) : Screen(carContext) {
 
         val itemListBuilder = ItemList.Builder()
         for (badge in badges) {
+            val tint = colorFor(badge.color)
             val icon = CarIcon.Builder(
                 IconCompat.createWithResource(carContext, iconResFor(badge.category))
-            ).setTint(colorFor(badge.color)).build()
+            ).setTint(tint).build()
+
+            // Row titles in ListTemplate reject all spans (host throws on any
+            // span, including ForegroundCarColorSpan, with an uncaught
+            // IllegalArgumentException that crashes the whole car app process)
+            // — plain text only here. addText() body lines DO support
+            // ForegroundCarColorSpan (confirmed in Row.java's own javadoc).
+            //
+            // Deliberately NOT the category tint here — TimToast.tsx's own
+            // convention (see its NEUTRAL comment) keeps category color
+            // scoped to the icon only, never full body text, because a
+            // category color (yellow especially) can read as low-contrast
+            // against either theme's row background. SECONDARY_TEXT_COLOR is
+            // a fixed, theme-aware neutral instead — distinct from the
+            // title's default color, legible in both day and night car
+            // themes, and the host falls back to its own default if this
+            // fails its contrast check anyway.
+            //
+            // Severity is spelled out here ("Severity X/5") rather than via
+            // setNumericDecoration — that API draws a bare number with no way
+            // to attach a caption/label to it, which read as an unexplained
+            // badge. Sharing the line with category+distance (instead of its
+            // own line) keeps all three always visible — Row allows at most 2
+            // body lines, and the second is reserved for durationText below.
+            val severitySuffix = if (badge.severity > 0) "  ·  Severity ${badge.severity}/5" else ""
+            val summaryLine = SpannableString(badge.categoryLabel + "  ·  " + badge.distanceText + severitySuffix).apply {
+                setSpan(ForegroundCarColorSpan.create(SECONDARY_TEXT_COLOR), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+
+            // Title is the zone's specific sub-type (e.g. "Work Zone
+            // Warning") rather than the top-level category — that now lives
+            // on summaryLine above. The list's own on-screen order (not row
+            // size — the host fixes that for every car app) is what surfaces
+            // the most severe/closest zone first; see CarBridgeService.ts's
+            // compareUrgency.
+            val rowBuilder = Row.Builder()
+                .setTitle(badge.label)
+                .addText(summaryLine)
+                // Row's second body line — always present (never blank; JS
+                // falls back to "Active indefinitely" when the TIM has no
+                // expiry) so the driver can always see how long a zone stays
+                // active.
+                .addText(badge.durationText)
 
             itemListBuilder.addItem(
-                Row.Builder()
-                    .setTitle(badge.label)
-                    .addText(badge.distanceText)
+                rowBuilder
                     .setImage(icon)
                     // Badges are otherwise persistent (no auto-expire) — a tap
                     // is the driver's own way to dismiss one. Forwarded to JS,
@@ -131,5 +176,15 @@ class TimZoneScreen(carContext: CarContext) : Screen(carContext) {
         // the JS-side keepalive is the one that normally keeps this fresh;
         // this is the outer safety net for the bridge going silent altogether.
         private const val BRIDGE_STALE_MS = 8000L
+
+        // Neutral secondary-text gray, not tied to TIM category — day/night
+        // pair so it stays legible against both car theme backgrounds (the
+        // host falls back to its own default if either fails contrast
+        // checks). See the distanceText comment above for why this isn't the
+        // category tint.
+        private val SECONDARY_TEXT_COLOR = CarColor.createCustom(
+            Color.parseColor("#5F6368"),
+            Color.parseColor("#BDC1C6"),
+        )
     }
 }

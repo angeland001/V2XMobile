@@ -9,8 +9,19 @@ object CarAppBridge {
         // specific zone rather than the whole category.
         val timId: Int,
         val color: String,
+        // The zone's specific sub-type (e.g. "Work Zone Warning") — this is
+        // the row's title on screen.
         val label: String,
+        // Top-level category (e.g. "Safety") — rendered on the row's
+        // secondary line, since the title now carries the sub-type.
+        val categoryLabel: String,
         val distanceText: String,
+        // "Active until <date>" / "Active indefinitely", pre-formatted by
+        // CarBridgeService.ts — TimZoneScreen.kt renders it verbatim.
+        val durationText: String,
+        // 1-5, same scale as SeverityDots elsewhere in the app. Drives
+        // TimZoneScreen.kt's trailing numeral decoration.
+        val severity: Int,
     )
 
     // updatedAtMs backs TimZoneScreen's own staleness watchdog: if the JS side

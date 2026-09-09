@@ -20,6 +20,14 @@ export interface NearbyTim {
   // True while the user is inside the zone's raw polygon, or was until they
   // left it without yet heading away — see activeInsideIds in checkProximity.
   inside: boolean;
+  // Carried through so CarBridgeService can surface it on the Android Auto
+  // badge — the API can send null/empty, same as TimHit.description.
+  description: string | null;
+  // Also carried through for CarBridgeService's severity numeral decoration.
+  severity: number;
+  // Carried through for CarBridgeService's Android Auto "active until" line —
+  // same null-when-open-ended contract as TimMessage.valid_until.
+  validUntil: string | null;
 }
 
 export type NearbyByCategory = Record<TimCategory, NearbyTim | null>;
@@ -198,7 +206,7 @@ export class TimService {
           // Prefer an inside zone over a merely-approaching one — "you're in
           // it" always outranks a further-off approach for the same category.
           if (!current || (isInside && !current.inside) || (isInside === current.inside && distMi < current.distanceMi)) {
-            newNearby[tim.category] = { timId: tim.id, timType: tim.tim_type, distanceMi: distMi, inside: isInside };
+            newNearby[tim.category] = { timId: tim.id, timType: tim.tim_type, distanceMi: distMi, inside: isInside, description: tim.description, severity: tim.severity, validUntil: tim.valid_until };
           }
         }
       } else {
