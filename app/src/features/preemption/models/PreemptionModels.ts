@@ -49,6 +49,13 @@ export interface SrmPayload {
 
 export type SsmStatus = 'requesting' | 'granted' | 'cancelled' | null;
 
+// Why PreemptionViewModel.clearSession() was called — surfaced by
+// PreemptionStatusBanner on the CLEARED/CLEAR NOT CONFIRMED states so a
+// driver whose grant only lasted a second or two knows why, instead of just
+// watching a bare elapsed counter blip and disappear. 'unmount' (screen/app
+// teardown) is never actually shown — there's no banner left to show it on.
+export type ClearReason = 'zone_exit' | 'toggled_off' | 'zone_deleted' | 'unmount' | null;
+
 // Wire payload for POST /nv2x-srm/api/v1/srm (roadaware Kafka ingest,
 // confirmed with the dashboard team — see PreemptionApiService.ts).
 export interface Nv2xSrmIngestPayload {

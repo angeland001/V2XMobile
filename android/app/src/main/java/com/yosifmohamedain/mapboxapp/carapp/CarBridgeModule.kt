@@ -37,9 +37,9 @@ class CarBridgeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
     }
 
     // badgesJson is a JSON array of {category, timId, color, label, categoryLabel,
-    // distanceText, durationText, severity} — see CarBridgeService.ts. Passed as
-    // a plain string rather than a ReadableArray since the shape is fixed and
-    // small; keeps this module a thin, dependency-free relay.
+    // durationText, severity} — see CarBridgeService.ts. Passed as a plain
+    // string rather than a ReadableArray since the shape is fixed and small;
+    // keeps this module a thin, dependency-free relay.
     @ReactMethod
     fun updateTimZones(badgesJson: String) {
         val badges = mutableListOf<CarAppBridge.TimBadge>()
@@ -54,7 +54,6 @@ class CarBridgeModule(reactContext: ReactApplicationContext) : ReactContextBaseJ
                         color = obj.getString("color"),
                         label = obj.getString("label"),
                         categoryLabel = obj.getString("categoryLabel"),
-                        distanceText = obj.getString("distanceText"),
                         durationText = obj.getString("durationText"),
                         severity = obj.optInt("severity", 0),
                     )

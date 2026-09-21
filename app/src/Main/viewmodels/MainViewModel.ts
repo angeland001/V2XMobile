@@ -154,17 +154,10 @@ export class MainViewModel {
             this.vehicleDisplayViewModel.setUserLocation([latitude, longitude]);
             this.vehicleDisplayViewModel.setDisplayRadius(this.settingsViewModel.sdsmDisplayRadiusM);
             this.vehicleDisplayViewModel.setShowAllRegardlessOfDistance(this.settingsViewModel.sdsmShowAllRegardlessOfDistance);
-            // Unconditional (not gated on moving/navigating) so this reflects
-            // actual app boot rather than "wherever the user happened to be
-            // the first time they started driving off-nav" — see TimService.
-            this.timService.primeIfNeeded(latitude, longitude);
-            if (!this.routeViewModel.isNavigating && this.mapViewModel.isMoving) {
+            if (!this.routeViewModel.isNavigating) {
               // While navigating, RouteViewModel alerts only for zones the route
-              // actually crosses (see RouteViewModel.checkTimZoneAlerts). While
-              // stationary, skip ambient checks entirely — a parked/idle phone's
-              // compass heading is meaningless as a direction of travel.
-              const heading = this.mapViewModel.headingValid ? this.mapViewModel.userHeading : null;
-              this.timService.checkProximity(latitude, longitude, heading);
+              // actually crosses (see RouteViewModel.checkTimZoneAlerts).
+              this.timService.checkProximity(latitude, longitude);
             }
             this.routeViewModel.setUserLocation([longitude, latitude]);
           }

@@ -340,8 +340,6 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = observer(({ setting
           <InfoRow icon="server-outline"    label="Dashboard API"    value={API_CONFIG.DASHBOARD_API_URL} />
           <View style={styles.cardDivider} />
           <InfoRow icon="timer-outline"     label="TIM Poll"         value="Every 15 seconds" />
-          <View style={styles.cardDivider} />
-          <InfoRow icon="radio-outline"     label="Buffer Radius"    value="0.5 miles" />
         </View>
 
         <Text style={styles.sectionLabel}>ABOUT</Text>

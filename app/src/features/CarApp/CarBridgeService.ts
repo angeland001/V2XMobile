@@ -45,9 +45,8 @@ interface CarBadge {
   // row's title on the car screen, not the top-level category.
   label: string;
   // Top-level category (e.g. "Safety") — rendered on the secondary line
-  // alongside distance/severity, since the title now carries the sub-type.
+  // alongside severity, since the title now carries the sub-type.
   categoryLabel: string;
-  distanceText: string;
   // "Active until <date>" / "Active indefinitely" — replaces the API
   // description on the car display (Row only has room for 2 body lines, and
   // expiry is more actionable for a driver than the operator's free text).
@@ -57,28 +56,24 @@ interface CarBadge {
   severity: number;
 }
 
-// The single best candidate per category, merged from whichever source is
-// active (route-crossing while navigating, buffer+heading while ambient) —
-// see computeCandidates. inside:true always wins over an approaching one for
-// the same category ("you're in it" outranks a further-off approach).
+// The single best (highest-severity) candidate per category, merged from
+// whichever source is active (route-crossing while navigating, plain
+// point-in-polygon while ambient) — see computeCandidates. A badge only
+// exists for a category the driver is currently physically inside a zone
+// of; there is no "approaching" state.
 interface CategoryCandidate {
   timId: number;
   timType: string;
-  inside: boolean;
-  distanceM: number; // 0 (unused) when inside
   validUntil: string | null;
   severity: number;
 }
 
-// Ranks candidates by urgency for on-screen ordering: being inside a zone
-// outranks merely approaching one, then higher severity, then closer
-// distance. TimZoneScreen.kt/the car-app Row API give every row the same
-// fixed size (no per-row font/height control), so list position is the only
-// real way to make the most urgent zone stand out.
+// Ranks candidates by urgency for on-screen ordering: higher severity leads.
+// TimZoneScreen.kt/the car-app Row API give every row the same fixed size (no
+// per-row font/height control), so list position is the only real way to
+// make the most urgent zone stand out.
 function compareUrgency(a: CategoryCandidate, b: CategoryCandidate): number {
-  if (a.inside !== b.inside) return a.inside ? -1 : 1;
-  if (a.severity !== b.severity) return b.severity - a.severity;
-  return a.distanceM - b.distanceM;
+  return b.severity - a.severity;
 }
 
 function formatDurationText(validUntil: string | null): string {
@@ -86,16 +81,8 @@ function formatDurationText(validUntil: string | null): string {
   return formatted ? `Active until ${formatted}` : 'Active indefinitely';
 }
 
-function formatDistanceMeters(m: number): string {
-  const ft = m * 3.28084;
-  if (ft < 1000) return `${Math.round(ft / 50) * 50 || Math.round(ft)} ft`;
-  const mi = m / 1609.34;
-  return `${mi.toFixed(1)} mi`;
-}
-
 // Builds the full display string here (native just renders it verbatim) so
-// TimZoneScreen.kt stays a thin, data-driven relay instead of encoding
-// "inside vs approaching" formatting rules natively.
+// TimZoneScreen.kt stays a thin, data-driven relay.
 function toBadge(category: TimCategory, candidate: CategoryCandidate): CarBadge {
   return {
     category,
@@ -103,7 +90,6 @@ function toBadge(category: TimCategory, candidate: CategoryCandidate): CarBadge 
     color: CATEGORY_COLOR[category],
     label: formatTimType(candidate.timType),
     categoryLabel: CATEGORY_LABEL[category],
-    distanceText: candidate.inside ? 'In Zone' : `${formatDistanceMeters(candidate.distanceM)} ahead`,
     durationText: formatDurationText(candidate.validUntil),
     severity: candidate.severity,
   };
@@ -132,36 +118,24 @@ export function startTimCarBridge(
     const result: Partial<Record<TimCategory, CategoryCandidate>> = {};
 
     if (routeViewModel.isNavigating) {
-      // Navigating: zones the route currently has the user inside of always
-      // win. RouteViewModel.approachingTimZones deliberately excludes those
-      // (it's the "not there yet" list), so this is the only place that
-      // surfaces them to the car display.
+      // Navigating: zones the route currently has the user physically inside
+      // of. Multiple simultaneous zones in the same category surface the
+      // more severe one.
       for (const hit of routeViewModel.insideTimZones) {
-        if (!result[hit.category]) {
-          result[hit.category] = { timId: hit.timId, timType: hit.timType, inside: true, distanceM: 0, validUntil: hit.validUntil, severity: hit.severity };
-        }
-      }
-      for (const hit of routeViewModel.approachingTimZones) {
-        if (result[hit.category]?.inside) continue;
-        const distanceM = routeViewModel.approachingTimZoneDistancesM.get(hit.timId);
-        if (distanceM == null) continue;
         const current = result[hit.category];
-        if (!current || distanceM < current.distanceM) {
-          result[hit.category] = { timId: hit.timId, timType: hit.timType, inside: false, distanceM, validUntil: hit.validUntil, severity: hit.severity };
+        if (!current || hit.severity > current.severity) {
+          result[hit.category] = { timId: hit.timId, timType: hit.timType, validUntil: hit.validUntil, severity: hit.severity };
         }
       }
     } else {
-      // Ambient: TimService's buffer (0.5mi) + heading based proximity —
-      // the same "prompted at 0.5mi while heading toward it" logic used
-      // everywhere else in the app.
+      // Ambient: TimService.nearbyByCategory already holds only zones the
+      // driver is currently physically inside of — see TimService.checkProximity.
       for (const category of CATEGORY_ORDER) {
         const nearby = timService.nearbyByCategory[category];
         if (!nearby) continue;
         result[category] = {
           timId: nearby.timId,
           timType: nearby.timType,
-          inside: nearby.inside,
-          distanceM: nearby.distanceMi * 1609.34,
           validUntil: nearby.validUntil,
           severity: nearby.severity,
         };
@@ -174,9 +148,8 @@ export function startTimCarBridge(
   // Every candidate is shown persistently — no auto-expire — until either
   // the driver taps it away on the Android Auto screen (dismissedByCategory,
   // set by the tap listener below) or the zone itself drops out of
-  // candidacy entirely (left the buffer, no longer heading toward it, or
-  // actually exited it). Final display order is by urgency (compareUrgency),
-  // not by category — the most severe/closest zone always leads.
+  // candidacy entirely (the driver has left it). Final display order is by
+  // urgency (compareUrgency), not by category — the most severe zone leads.
   const selectVisibleBadges = (candidates: Partial<Record<TimCategory, CategoryCandidate>>): CarBadge[] => {
     const entries: { category: TimCategory; candidate: CategoryCandidate }[] = [];
 
@@ -208,10 +181,10 @@ export function startTimCarBridge(
 
   function push(): void {
     const badges = selectVisibleBadges(computeCandidates());
-    const key = badges.map((b) => `${b.category}:${b.distanceText}`).join(',');
+    const key = badges.map((b) => `${b.category}:${b.timId}`).join(',');
     if (key !== lastLoggedKey) {
       lastLoggedKey = key;
-      console.log('[CarBridge] TIM zone badges changed', badges.map((b) => `${b.category}:${b.distanceText}`));
+      console.log('[CarBridge] TIM zone badges changed', badges.map((b) => `${b.category}:${b.label}`));
     }
     NativeModules.CarBridge?.updateTimZones(JSON.stringify(badges));
   }
@@ -236,8 +209,6 @@ export function startTimCarBridge(
       [
         settingsViewModel.carDisplayAlerts,
         routeViewModel.isNavigating,
-        routeViewModel.approachingTimZones,
-        routeViewModel.approachingTimZoneDistancesM,
         routeViewModel.insideTimZones,
         timService.nearbyByCategory,
       ] as const,

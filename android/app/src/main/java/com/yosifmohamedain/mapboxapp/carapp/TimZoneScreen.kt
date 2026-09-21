@@ -23,8 +23,9 @@ import com.yosifmohamedain.mapboxapp.R
 
 // Driver-glance-only TIM zone screen: up to three color-coded badges — one
 // per TIM category (safety/red, regulatory/yellow, informational/blue) —
-// each showing the nearest zone in that category and its distance. Replaces
-// this app's former preemption-status screen on Android Auto.
+// each shown only while the driver is physically inside a zone of that
+// category, and removed the instant they leave it (re-entering shows it
+// again). Replaces this app's former preemption-status screen on Android Auto.
 //
 // Two independent staleness guards feed into this screen, both landing on
 // the same "Status Unavailable" rendering so a lagging feed never displays
@@ -111,11 +112,13 @@ class TimZoneScreen(carContext: CarContext) : Screen(carContext) {
             // Severity is spelled out here ("Severity X/5") rather than via
             // setNumericDecoration — that API draws a bare number with no way
             // to attach a caption/label to it, which read as an unexplained
-            // badge. Sharing the line with category+distance (instead of its
-            // own line) keeps all three always visible — Row allows at most 2
-            // body lines, and the second is reserved for durationText below.
+            // badge. Sharing the line with category (instead of its own line)
+            // keeps both always visible — Row allows at most 2 body lines,
+            // and the second is reserved for durationText below. Every badge
+            // here is a zone the driver is currently inside of (there's no
+            // "approaching" state), so the line always reads "In Zone".
             val severitySuffix = if (badge.severity > 0) "  ·  Severity ${badge.severity}/5" else ""
-            val summaryLine = SpannableString(badge.categoryLabel + "  ·  " + badge.distanceText + severitySuffix).apply {
+            val summaryLine = SpannableString(badge.categoryLabel + "  ·  In Zone" + severitySuffix).apply {
                 setSpan(ForegroundCarColorSpan.create(SECONDARY_TEXT_COLOR), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
 
@@ -123,7 +126,7 @@ class TimZoneScreen(carContext: CarContext) : Screen(carContext) {
             // Warning") rather than the top-level category — that now lives
             // on summaryLine above. The list's own on-screen order (not row
             // size — the host fixes that for every car app) is what surfaces
-            // the most severe/closest zone first; see CarBridgeService.ts's
+            // the most severe zone first; see CarBridgeService.ts's
             // compareUrgency.
             val rowBuilder = Row.Builder()
                 .setTitle(badge.label)
@@ -180,7 +183,7 @@ class TimZoneScreen(carContext: CarContext) : Screen(carContext) {
         // Neutral secondary-text gray, not tied to TIM category — day/night
         // pair so it stays legible against both car theme backgrounds (the
         // host falls back to its own default if either fails contrast
-        // checks). See the distanceText comment above for why this isn't the
+        // checks). See the summaryLine comment above for why this isn't the
         // category tint.
         private val SECONDARY_TEXT_COLOR = CarColor.createCustom(
             Color.parseColor("#5F6368"),

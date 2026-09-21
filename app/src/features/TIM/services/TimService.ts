@@ -1,14 +1,5 @@
 import { makeObservable, observable, action, runInAction } from 'mobx';
-import {
-  point,
-  polygon,
-  buffer,
-  booleanPointInPolygon,
-  bearing,
-  centroid,
-  distance,
-} from '@turf/turf';
-import type { Feature, Polygon, MultiPolygon } from 'geojson';
+import { point, polygon, booleanPointInPolygon } from '@turf/turf';
 import { API_CONFIG } from '../../../core/api/config';
 import { normalizeToLngLat, closeRing } from '../../../core/maps/coordinates';
 import { TimMessage, TimHit, TimCategory, timCategoryFromType } from '../models/TimTypes';
@@ -16,10 +7,6 @@ import { TimMessage, TimHit, TimCategory, timCategoryFromType } from '../models/
 export interface NearbyTim {
   timId: number;
   timType: string;
-  distanceMi: number;
-  // True while the user is inside the zone's raw polygon, or was until they
-  // left it without yet heading away — see activeInsideIds in checkProximity.
-  inside: boolean;
   // Carried through so CarBridgeService can surface it on the Android Auto
   // badge — the API can send null/empty, same as TimHit.description.
   description: string | null;
@@ -31,15 +18,6 @@ export interface NearbyTim {
 }
 
 export type NearbyByCategory = Record<TimCategory, NearbyTim | null>;
-
-export interface TimToastItem {
-  id: string;
-  category: 'safety' | 'regulatory' | 'informational';
-  message: string;
-  timestamp: number;
-  timId: number;
-  severity: number;
-}
 
 export interface TimAlertLogItem {
   id: string;
@@ -57,39 +35,30 @@ export interface TimAlertLogItem {
 
 export class TimService {
   activeTims: TimMessage[] = [];
-  toastQueue: TimToastItem[] = [];
   alertLog: TimAlertLogItem[] = [];
   unreadAlertCount: number = 0;
-  timDistances: Map<number, number> = new Map();
-  // Nearest zone per category the user is currently inside the buffer of AND
-  // heading toward — live/continuous (unlike alertedIds below, which is a
-  // one-shot "fired once" gate for the toast). Drives the Android Auto badge
-  // display, which needs to reflect the current approach state, not a
-  // single historical alert.
+  // Nearest (highest-severity) zone per category the user is currently
+  // physically inside — live/continuous, recomputed every checkProximity
+  // tick. Drives both the Android Auto badge display and the in-app zone
+  // banner: present only while inside a zone, gone the instant the user
+  // exits it, and populated again on re-entry (see checkProximity).
   nearbyByCategory: NearbyByCategory = { safety: null, regulatory: null, informational: null };
 
   private pollInterval: NodeJS.Timeout | null = null;
-  private bufferedCache = new Map<number, Feature<Polygon | MultiPolygon>>();
-  private alertedIds = new Set<number>();
-  // Zones the user is currently inside, or was inside and hasn't yet both
-  // left AND turned away from — see the dismiss rule in checkProximity.
-  // Distinct from alertedIds, which only gates the one-shot toast.
-  private activeInsideIds = new Set<number>();
-  // False until primeIfNeeded's one-time seed pass has run — see there.
-  private hasSeededInitialProximity = false;
+  // Zones the user is currently inside — the only state checkProximity needs
+  // to tell "just entered" (log a fresh alert) from "still inside" (no-op)
+  // from "just left" (drop out of nearbyByCategory).
+  private insideIds = new Set<number>();
 
   constructor() {
     makeObservable(this, {
       activeTims: observable,
-      toastQueue: observable,
       alertLog: observable,
       unreadAlertCount: observable,
-      timDistances: observable,
       nearbyByCategory: observable,
       start: action,
       stop: action,
       checkProximity: action,
-      dismissToast: action,
       clearUnreadCount: action,
     });
   }
@@ -105,118 +74,58 @@ export class TimService {
       clearInterval(this.pollInterval);
       this.pollInterval = null;
     }
-    this.alertedIds.clear();
-    this.activeInsideIds.clear();
-    this.bufferedCache.clear();
-    this.hasSeededInitialProximity = false;
+    this.insideIds.clear();
     runInAction(() => {
       this.activeTims = [];
-      this.toastQueue = [];
-      this.timDistances = new Map();
       this.nearbyByCategory = { safety: null, regulatory: null, informational: null };
     });
-  }
-
-  dismissToast(id: string): void {
-    this.toastQueue = this.toastQueue.filter((t) => t.id !== id);
   }
 
   clearUnreadCount(): void {
     this.unreadAlertCount = 0;
   }
 
-  // One-time seed of alertedIds/activeInsideIds for whatever the user is
-  // already inside the buffer of the moment real GPS + TIM data both exist —
-  // called unconditionally (regardless of moving/navigating) so it reflects
-  // actual app boot, not "wherever the first movement-gated checkProximity
-  // call happened to land". Without this decoupling, a zone the user starts
-  // near — but doesn't reach until well into the drive — got permanently
-  // misclassified as "already seen at boot" and never alerted. No-ops after
-  // the first successful pass (or forever if activeTims never loads).
-  primeIfNeeded(latitude: number, longitude: number): void {
-    if (this.hasSeededInitialProximity || !this.activeTims.length) return;
-    this.hasSeededInitialProximity = true;
-
-    const userPoint = point([longitude, latitude]);
-    for (const tim of this.activeTims) {
-      const bufferedGeom = this.bufferedCache.get(tim.id);
-      if (!bufferedGeom || !booleanPointInPolygon(userPoint, bufferedGeom)) continue;
-      this.alertedIds.add(tim.id);
-      try {
-        if (booleanPointInPolygon(userPoint, polygon(tim.geometry.coordinates))) {
-          this.activeInsideIds.add(tim.id);
-        }
-      } catch {}
-    }
-  }
-
-  // Ambient (non-navigating) proximity check: a zone only alerts once, while the
-  // user is within its buffer AND actually heading toward it — not on buffer entry alone.
-  checkProximity(latitude: number, longitude: number, heading: number | null): void {
+  // Ambient (non-navigating) proximity check: a zone alerts exactly when the
+  // user's position enters its polygon, and drops out of nearbyByCategory
+  // the instant they exit it — no buffer, no heading, no lingering. Re-entry
+  // (even of the same zone, later) alerts again since insideIds is cleared
+  // on exit.
+  checkProximity(latitude: number, longitude: number): void {
     if (!this.activeTims.length) return;
-    this.primeIfNeeded(latitude, longitude);
 
     const userPoint = point([longitude, latitude]);
-    const nowInBuffer = new Set<number>();
-    const newDistances = new Map<number, number>();
+    const nowInside = new Set<number>();
     const newNearby: NearbyByCategory = { safety: null, regulatory: null, informational: null };
 
     for (const tim of this.activeTims) {
-      let distMi: number | undefined;
+      let isInside = false;
       try {
-        const poly = polygon(tim.geometry.coordinates);
-        const c = centroid(poly);
-        distMi = distance(userPoint, c, { units: 'miles' });
-        newDistances.set(tim.id, distMi);
-      } catch {}
+        isInside = booleanPointInPolygon(userPoint, polygon(tim.geometry.coordinates));
+      } catch {
+        continue; // Skip malformed geometry
+      }
+      if (!isInside) continue;
 
-      const bufferedGeom = this.bufferedCache.get(tim.id);
-      if (!bufferedGeom) continue;
+      nowInside.add(tim.id);
+      if (!this.insideIds.has(tim.id)) {
+        this.triggerAlert(tim);
+      }
 
-      const inBuffer = booleanPointInPolygon(userPoint, bufferedGeom);
-
-      if (inBuffer) {
-        nowInBuffer.add(tim.id);
-        const headingOk = heading === null || this.isHeadingTowardZone(latitude, longitude, tim, heading);
-
-        // "Inside" the zone itself (not just its 0.5mi buffer). Once inside,
-        // keep reporting inside:true after the user exits the polygon until
-        // they're ALSO no longer heading toward it — leaving the zone while
-        // still travelling through/toward it (boundary jitter, a large zone)
-        // shouldn't flip the badge off and on. Only left+heading-away dismisses it.
-        let poly: Feature<Polygon> | undefined;
-        try {
-          poly = polygon(tim.geometry.coordinates);
-        } catch {}
-        const insideZone = poly != null && booleanPointInPolygon(userPoint, poly);
-        if (insideZone) {
-          this.activeInsideIds.add(tim.id);
-        } else if (this.activeInsideIds.has(tim.id) && !headingOk) {
-          this.activeInsideIds.delete(tim.id);
-        }
-
-        if (!this.alertedIds.has(tim.id) && headingOk) {
-          this.alertedIds.add(tim.id);
-          this.triggerAlert(tim);
-        }
-
-        const isInside = this.activeInsideIds.has(tim.id);
-        if ((headingOk || isInside) && distMi != null) {
-          const current = newNearby[tim.category];
-          // Prefer an inside zone over a merely-approaching one — "you're in
-          // it" always outranks a further-off approach for the same category.
-          if (!current || (isInside && !current.inside) || (isInside === current.inside && distMi < current.distanceMi)) {
-            newNearby[tim.category] = { timId: tim.id, timType: tim.tim_type, distanceMi: distMi, inside: isInside, description: tim.description, severity: tim.severity, validUntil: tim.valid_until };
-          }
-        }
-      } else {
-        // Left the buffer entirely — unconditional exit regardless of heading.
-        this.alertedIds.delete(tim.id);
-        this.activeInsideIds.delete(tim.id);
+      const current = newNearby[tim.category];
+      // Multiple overlapping zones of the same category: surface the more
+      // severe one on the shared per-category slot.
+      if (!current || tim.severity > current.severity) {
+        newNearby[tim.category] = {
+          timId: tim.id,
+          timType: tim.tim_type,
+          description: tim.description,
+          severity: tim.severity,
+          validUntil: tim.valid_until,
+        };
       }
     }
 
-    this.timDistances = newDistances;
+    this.insideIds = nowInside;
     this.nearbyByCategory = newNearby;
   }
 
@@ -233,21 +142,9 @@ export class TimService {
           const category = timCategoryFromType(tim.tim_type);
           return this.normalizeTimGeometry({ ...tim, category });
         });
-      const newCache = new Map<number, Feature<Polygon | MultiPolygon>>();
-
-      for (const tim of tims) {
-        try {
-          const poly = polygon(tim.geometry.coordinates);
-          const buf = buffer(poly, 0.5, { units: 'miles' });
-          if (buf) newCache.set(tim.id, buf as Feature<Polygon | MultiPolygon>);
-        } catch {
-          // Skip malformed geometry
-        }
-      }
 
       runInAction(() => {
         this.activeTims = tims;
-        this.bufferedCache = newCache;
       });
     } catch {
       // Silent — same pattern as SpatZoneService
@@ -271,31 +168,27 @@ export class TimService {
   }
 
   private triggerAlert(tim: TimMessage): void {
-    this.pushAlert(
-      {
-        timId: tim.id,
-        timType: tim.tim_type,
-        category: tim.category,
-        severity: tim.severity,
-        description: tim.description,
-        itisCodes: tim.itis_codes,
-        validFrom: tim.valid_from,
-        validUntil: tim.valid_until,
-        geometry: tim.geometry,
-      },
-      { toast: true },
-    );
+    this.pushAlert({
+      timId: tim.id,
+      timType: tim.tim_type,
+      category: tim.category,
+      severity: tim.severity,
+      description: tim.description,
+      itisCodes: tim.itis_codes,
+      validFrom: tim.valid_from,
+      validUntil: tim.valid_until,
+      geometry: tim.geometry,
+    });
   }
 
-  // Called by RouteViewModel when the active navigation route crosses a TIM zone
-  // and the user has come within its heads-up lookahead distance. Only logs the
-  // alert — the persistent nav UI is driven by RouteViewModel.approachingTimZones,
-  // not the ephemeral toast queue.
+  // Called by RouteViewModel when the active navigation route's user
+  // position enters a TIM zone it crosses. Just logs the alert — the
+  // persistent nav UI is driven directly by RouteViewModel.insideTimZones.
   triggerRouteAlert(hit: TimHit): void {
-    this.pushAlert(hit, { toast: false });
+    this.pushAlert(hit);
   }
 
-  private pushAlert(hit: TimHit, opts: { toast: boolean }): void {
+  private pushAlert(hit: TimHit): void {
     // `??` only falls back on null/undefined — the API can also send an empty
     // string for description, which would otherwise render as blank text.
     const message = hit.description || `${hit.timType} ahead`;
@@ -316,41 +209,7 @@ export class TimService {
         geometry: hit.geometry,
       });
       this.unreadAlertCount += 1;
-
-      if (opts.toast) {
-        this.toastQueue.push({
-          id,
-          category: hit.category,
-          message,
-          timestamp: Date.now(),
-          timId: hit.timId,
-          severity: hit.severity,
-        });
-      }
     });
-  }
-
-  private isHeadingTowardZone(
-    latitude: number,
-    longitude: number,
-    tim: TimMessage,
-    deviceHeading: number,
-  ): boolean {
-    try {
-      const userPt = point([longitude, latitude]);
-      const poly = polygon(tim.geometry.coordinates);
-      const zoneCentroid = centroid(poly);
-      const rawBearing = bearing(userPt, zoneCentroid);
-      const zoneBearing = (rawBearing + 360) % 360;
-      return this.angularDiff(deviceHeading, zoneBearing) <= 90;
-    } catch {
-      return true;
-    }
-  }
-
-  private angularDiff(a: number, b: number): number {
-    const d = Math.abs(a - b) % 360;
-    return d > 180 ? 360 - d : d;
   }
 }
 

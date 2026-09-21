@@ -2,7 +2,7 @@ import { makeAutoObservable, runInAction } from 'mobx';
 import { API_CONFIG } from '../../../core/api/config';
 import type { SpatZone } from '../../SpatService/services/SpatZoneService';
 import { SpatZoneService } from '../../SpatService/services/SpatZoneService';
-import type { PreemptionZoneConfig, SrmPayload, SsmStatus } from '../models/PreemptionModels';
+import type { ClearReason, PreemptionZoneConfig, SrmPayload, SsmStatus } from '../models/PreemptionModels';
 import { PreemptionApiService } from '../services/PreemptionApiService';
 import { PreemptionConfigService } from '../services/PreemptionConfigService';
 import { RetryService } from '../services/RetryService';
@@ -14,17 +14,6 @@ export class PreemptionViewModel {
   sessionId: string | null = null;
   insideZone = false;
   ssmStatus: SsmStatus = null;
-  // Wall-clock ms timestamp of the rising edge into 'granted' — null whenever
-  // ssmStatus isn't 'granted'. Purely for PreemptionStatusBanner's client-side
-  // elapsed-timer display; never sent to the backend.
-  grantedAt: number | null = null;
-  // The dashboard's configured preempt-duration bounds (NTCIP minDuration_s/
-  // maxOut_s) for the active session's zone, fetched once per grant via
-  // PreemptionConfigService.fetchTimingBounds — see startPreemption. null
-  // until that fetch resolves, or if the zone has no controller/timing data
-  // configured. Drives PreemptionCountdown's "time remaining" readout;
-  // reset in lockstep with grantedAt by setSsmStatus below.
-  timingBounds: { minDurationS: number | null; maxOutS: number | null } | null = null;
   activeZoneName: string | null = null;
   // Timestamp of the current 1.5s heartbeat cycle's start. No longer read by
   // any UI (previously drove a progress-bar animation that's since been
@@ -52,6 +41,11 @@ export class PreemptionViewModel {
   // the session wrapped up cleanly.
   lastClearConfirmed: boolean | null = null;
   lastClearZoneName: string | null = null;
+  // Why the just-ended session was cleared (zone exit, manual toggle-off,
+  // zone deleted from the dashboard) — set by clearSession() in lockstep with
+  // lastClearZoneName, so PreemptionStatusBanner can explain a clear instead
+  // of just showing a bare elapsed counter that already reset to nothing.
+  lastClearReason: ClearReason = null;
   private clearConfirmTimeout: NodeJS.Timeout | null = null;
   private static readonly CLEAR_CONFIRM_DISPLAY_MS = 10_000;
 
@@ -103,20 +97,6 @@ export class PreemptionViewModel {
     }, this.CONFIG_SYNC_INTERVAL_MS);
   }
 
-  // Centralizes ssmStatus writes so grantedAt (rising edge into 'granted') and
-  // its reset (any transition away from 'granted') can never drift out of
-  // sync — the alternative is duplicating that edge comparison at every call
-  // site below.
-  private setSsmStatus(status: SsmStatus): void {
-    if (status === 'granted' && this.ssmStatus !== 'granted') {
-      this.grantedAt = Date.now();
-    } else if (status !== 'granted') {
-      this.grantedAt = null;
-      this.timingBounds = null;
-    }
-    this.ssmStatus = status;
-  }
-
   toggleEnabled(enabled: boolean): void {
     const wasEnabled = this.isEnabled;
     this.isEnabled = enabled;
@@ -124,7 +104,7 @@ export class PreemptionViewModel {
     // Handle toggle OFF → clear session
     if (wasEnabled && !enabled && this.sessionId) {
       console.log('[Preemption] Toggle OFF: Clearing active session');
-      this.clearSession();
+      this.clearSession('toggled_off');
     }
   }
 
@@ -240,7 +220,7 @@ export class PreemptionViewModel {
     }
 
     runInAction(() => {
-      this.setSsmStatus('requesting');
+      this.ssmStatus = 'requesting';
       this.activeZoneName = zone.name;
       // A fresh attempt supersedes any leftover failure flag from a previous
       // one — don't let an old "request failed" linger through a new try.
@@ -283,7 +263,7 @@ export class PreemptionViewModel {
       this.isPendingStart = false;
       if (result) {
         this.sessionId = result.sessionId;
-        this.setSsmStatus(result.ssmStatus);
+        this.ssmStatus = result.ssmStatus;
         this.requestedSignalGroup = config.signalGroup;
         this.requestedPreemptChannel = config.preemptChannel;
         this.controllerSignalState = null;
@@ -298,7 +278,7 @@ export class PreemptionViewModel {
         );
         // Heartbeat will be started in syncPosition
       } else {
-        this.setSsmStatus(null);
+        this.ssmStatus = null;
         this.activeZoneName = null;
         this.lastStartFailed = true;
         this.lastStartFailedZoneName = zone.name;
@@ -310,20 +290,6 @@ export class PreemptionViewModel {
       }
     });
     if (!result) this.scheduleStartFailedExpiry();
-
-    // Fetch the dashboard's configured duration bounds for PreemptionCountdown
-    // once per grant — fire-and-forget, not awaited, since it must never delay
-    // showing "granted." Guarded on sessionId so a slow response can't clobber
-    // a newer session's state if the driver has already left/re-entered by
-    // the time it resolves.
-    if (result && result.ssmStatus === 'granted') {
-      const sessionId = result.sessionId;
-      PreemptionConfigService.fetchTimingBounds(config.id).then((bounds) => {
-        runInAction(() => {
-          if (this.sessionId === sessionId) this.timingBounds = bounds;
-        });
-      });
-    }
   }
 
   private scheduleStartFailedExpiry(): void {
@@ -401,14 +367,14 @@ export class PreemptionViewModel {
     if (!this.sessionId) return;
 
     console.log('[Preemption] Zone EXIT detected - Clearing preemption session');
-    this.clearSession();
+    this.clearSession('zone_exit');
   }
 
-  private clearSession(): void {
+  private clearSession(reason: ClearReason): void {
     if (!this.sessionId) return;
 
     const sessionId = this.sessionId;
-    console.log('[Preemption] Calling /preempt/clear for session:', sessionId);
+    console.log('[Preemption] Calling /preempt/clear for session:', sessionId, '| reason:', reason);
 
     // Stop heartbeat
     this.stopHeartbeat();
@@ -421,10 +387,11 @@ export class PreemptionViewModel {
     // clear's own response arrives.
     this.lastClearConfirmed = null;
     this.lastClearZoneName = this.activeZoneName;
+    this.lastClearReason = reason;
 
     // Reset session state
     this.sessionId = null;
-    this.setSsmStatus(null);
+    this.ssmStatus = null;
     this.activeZoneName = null;
     this.requestedSignalGroup = null;
     this.requestedPreemptChannel = null;
@@ -471,7 +438,7 @@ export class PreemptionViewModel {
 
         if (this.trackedZoneId === zoneId && this.sessionId) {
           console.log('[Preemption] Active zone was deleted — clearing session');
-          runInAction(() => { this.clearSession(); });
+          runInAction(() => { this.clearSession('zone_deleted'); });
         }
       }
     }
@@ -505,6 +472,10 @@ export class PreemptionViewModel {
         body: JSON.stringify(payload),
       });
       console.log('[Preemption] N-V2X SRM ingest response status:', response.status);
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => '<unreadable body>');
+        console.log('[Preemption] N-V2X SRM ingest error body:', bodyText);
+      }
     } catch (error) {
       // Non-critical — the dashboard visualization lagging or missing a
       // beat must never block or fail the actual preemption request.
@@ -577,7 +548,7 @@ export class PreemptionViewModel {
           console.log('[API] HB | ok:', data.ok, '| detail:', data.detail, '| preempt_channel:', data.preempt_channel, '| current_state:', data.current_state);
           const status = data?.ssm?.value?.[1]?.status as 'granted' | 'cancelled' | undefined;
           if (status && status !== this.ssmStatus) {
-            runInAction(() => { this.setSsmStatus(status); });
+            runInAction(() => { this.ssmStatus = status; });
           }
           this.lastHeartbeatSuccessAt = Date.now();
           runInAction(() => {
@@ -640,6 +611,7 @@ export class PreemptionViewModel {
       runInAction(() => {
         this.lastClearConfirmed = null;
         this.lastClearZoneName = null;
+        this.lastClearReason = null;
       });
     }, PreemptionViewModel.CLEAR_CONFIRM_DISPLAY_MS);
   }
@@ -651,7 +623,7 @@ export class PreemptionViewModel {
       this.configSyncInterval = null;
     }
     if (this.sessionId) {
-      this.clearSession();
+      this.clearSession('unmount');
     }
     this.stopHeartbeat();
     if (this.clearConfirmTimeout) {

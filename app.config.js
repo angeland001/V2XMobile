@@ -30,7 +30,7 @@ module.exports = {
     },
     android: {
       package: 'com.yosifmohamedain.mapboxapp',
-      versionCode: 24,
+      versionCode: 26,
       permissions: [
         'ACCESS_FINE_LOCATION',
         'ACCESS_COARSE_LOCATION',

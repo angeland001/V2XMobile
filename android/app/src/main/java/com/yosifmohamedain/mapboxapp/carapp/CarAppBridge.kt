@@ -15,7 +15,6 @@ object CarAppBridge {
         // Top-level category (e.g. "Safety") — rendered on the row's
         // secondary line, since the title now carries the sub-type.
         val categoryLabel: String,
-        val distanceText: String,
         // "Active until <date>" / "Active indefinitely", pre-formatted by
         // CarBridgeService.ts — TimZoneScreen.kt renders it verbatim.
         val durationText: String,

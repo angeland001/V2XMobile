@@ -222,7 +222,7 @@ export const AlertsScreen: React.FC<AlertsScreenProps> = observer(({ timService 
           <Text style={styles.emptyTitle}>ALL CLEAR</Text>
           <Text style={styles.emptySub}>
             No TIM alerts have fired this session.{'\n'}
-            Alerts appear here when you approach active zones.
+            Alerts appear here when you enter an active zone.
           </Text>
         </View>
       ) : (

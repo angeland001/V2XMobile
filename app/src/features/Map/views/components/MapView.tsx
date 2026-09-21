@@ -19,7 +19,6 @@ import { VRUMarkers } from "../../../SDSM/views/VRUMarkers";
 import { TestingModeOverlay } from "../../../../testingFeatures/testingUI";
 import { LaneOverlay } from "../../../Lanes/views/components/LaneOverlay";
 import { PreemptionStatusBanner } from "../../../preemption/components/PreemptionStatusBanner";
-import { PreemptionCountdown } from "../../../preemption/components/PreemptionCountdown";
 import { LanesViewModel } from "../../../Lanes/viewmodels/LanesViewModel";
 import { CROSSWALK_POLYGONS } from "../../../Crosswalk/constants/CrosswalkCoordinates";
 import { CrosswalkDetectionService } from "../../../PedestrianDetector/services/CrosswalkDetectionService";
@@ -488,7 +487,7 @@ const NAV_TOP_RIGHT_ORDER = ["etaBanner", "preemptionToggle"] as const;
 // enough that its top-anchored spot and the preemption status banner's old
 // bottom-anchored spot could occupy the same vertical band. Stacking the
 // panel directly below the toggle's measured height removes the guesswork.
-const LEFT_STACK_ORDER = ["preemptionToggle", "preemptionCountdown", "preemptionBanner"] as const;
+const LEFT_STACK_ORDER = ["preemptionToggle", "preemptionBanner"] as const;
 // Left inset for the preemption status banner specifically when it's stacked
 // below the toggle on a wide car display — PreemptionToggle's own position
 // never changes; only this value moves the banner. Edit this number to shift it.
@@ -649,9 +648,9 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     // Tablet-only override of where the toggle itself actually renders: it
     // docks top-right, stacked directly below MapLegend, instead of the
     // left-centered spot `preemptionTop` computes above — that left-centered
-    // math is kept as-is (unchanged) purely so PreemptionCountdown/
-    // PreemptionStatusBanner below still stack from the same spot they
-    // always have; only the toggle's own position moves. Navigating still
+    // math is kept as-is (unchanged) purely so PreemptionStatusBanner below
+    // still stacks from the same spot it always has; only the toggle's own
+    // position moves. Navigating still
     // wins over this (same right-docked spot under the ETA chip either way).
     const preemptionToggleDockRight = preemptionDockRight || isTablet;
     const preemptionToggleTop = preemptionDockRight
@@ -674,19 +673,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     const stackPreemptionBannerBelowToggle = (isWide || isTablet) && !preemptionDockRight;
     const preemptionBannerTop = stackPreemptionBannerBelowToggle
       ? leftStack.offsetFor('preemptionBanner', preemptionTop)
-      : undefined;
-    // PreemptionCountdown sits directly above the status banner in both
-    // layout modes: on the leftStack path it's just another stack member
-    // (registered ahead of 'preemptionBanner' in LEFT_STACK_ORDER, so the
-    // banner's own offsetFor above already shifts down to clear it); on the
-    // bottom-anchored fallback (phone, or any device while navigating —
-    // same condition the banner itself falls back on) it sits just above
-    // the banner's own real measured height rather than a guessed constant.
-    const preemptionCountdownTop = stackPreemptionBannerBelowToggle
-      ? leftStack.offsetFor('preemptionCountdown', preemptionTop)
-      : undefined;
-    const preemptionCountdownBottom = !stackPreemptionBannerBelowToggle
-      ? 100 + leftStack.heightFor('preemptionBanner') + 15
       : undefined;
 
     // Recenter button unmounts as soon as the user stops panning away — clear
@@ -1037,6 +1023,21 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
     useEffect(() => {
       preemptionViewModel.syncPosition(userPosition, spatZones);
     }, [preemptionViewModel, userPosition, spatZones]);
+
+    // Spoken cue when the driver flips the Auto Priority toggle itself
+    // (Settings screen), independent of whether a session ends up granted —
+    // this confirms the toggle action, not the request outcome. reaction
+    // (not fireImmediately) skips announcing on initial mount, only on an
+    // actual flip.
+    useEffect(() => {
+      return reaction(
+        () => preemptionViewModel.isEnabled,
+        (enabled) => {
+          if (!(mainViewModel?.settingsViewModel?.preemptionVoiceAlerts ?? true)) return;
+          VoiceGuidanceService.announce(enabled ? 'Priority On' : 'Priority Off');
+        },
+      );
+    }, [preemptionViewModel, mainViewModel]);
 
     // Spoken cue on grant and (once the controller confirms) clear — so a
     // driver doesn't have to glance at PreemptionStatusBanner to know the
@@ -1445,21 +1446,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
           testingVehicleDisplayViewModel={testingVehicleDisplayViewModel}
         />
 
-        <PreemptionCountdown
-          active={
-            (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) &&
-            isPreempting &&
-            preemptionViewModel.ssmStatus === 'granted'
-          }
-          grantedAt={preemptionViewModel.grantedAt}
-          minDurationS={preemptionViewModel.timingBounds?.minDurationS ?? null}
-          maxOutS={preemptionViewModel.timingBounds?.maxOutS ?? null}
-          top={preemptionCountdownTop}
-          bottom={preemptionCountdownBottom}
-          left={stackPreemptionBannerBelowToggle ? PREEMPTION_BANNER_CAR_LEFT : undefined}
-          onLayout={leftStack.onLayout('preemptionCountdown')}
-        />
-
         <PreemptionStatusBanner
           // ssmStatus/intersectionName go straight to null/undefined the
           // instant the session ends — no lingering display state to worry
@@ -1471,7 +1457,6 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
               : null
           }
           feedStale={isPreempting ? preemptionViewModel.feedStale : false}
-          grantedAt={preemptionViewModel.grantedAt}
           // Once the session itself has ended, the banner has one more thing
           // it can still usefully report: whether the controller actually
           // confirmed the clear. lastClearConfirmed/lastClearZoneName run on
@@ -1486,6 +1471,14 @@ export const MapViewComponent: React.FC<MapViewProps> = observer(
             (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) &&
             !isPreempting &&
             preemptionViewModel.lastClearConfirmed === true
+          }
+          // Runs on the same lastClearConfirmed !== null window as
+          // lastClearZoneName below (see PreemptionViewModel.clearSession) —
+          // covers both the confirmed and not-yet/never-confirmed clear states.
+          clearReason={
+            preemptionViewModel.lastClearConfirmed !== null
+              ? preemptionViewModel.lastClearReason
+              : null
           }
           startFailed={
             (mainViewModel?.settingsViewModel?.preemptionBannerEnabled ?? true) &&

@@ -13,8 +13,11 @@ import { TimService } from '../../TIM/services/TimService';
 import { RouteViewModel } from '../../Route/viewmodels/RouteViewModel';
 import { SettingsViewModel } from '../viewmodels/SettingsViewModel';
 import { useResponsiveLayout } from '../hooks/useResponsiveLayout';
+import { formatTimType } from '../utils/timFormatting';
 
 type TimCategory = 'safety' | 'regulatory' | 'informational';
+
+const CATEGORY_ORDER: TimCategory[] = ['safety', 'regulatory', 'informational'];
 
 // The banner itself is neutral (always light, see NEUTRAL below) — category
 // is signaled only through the icon and its tinted badge, not the whole
@@ -46,30 +49,17 @@ interface DisplayItem {
   key: string;
   category: TimCategory;
   message: string;
-  distanceM: number | null;
-  // Every card is persistent now (stays until tapped, or until the source
-  // condition clears it — see the zone-entry effect below for the ambient
-  // toast) — this is how the card itself clears itself, wired per-source
-  // since route-mode zones and the ambient toast queue track dismissal
-  // differently (local Set vs TimService.toastQueue).
+  // Every card is persistent — shown for as long as the driver is physically
+  // inside the zone it's for, and cleared the instant they leave it (see the
+  // ambient/nav branches below) — plus a local per-key dismiss so a tap can
+  // hide one without waiting for the driver to exit the zone.
   onDismiss: () => void;
-}
-
-function formatDistanceMeters(m: number): string {
-  const ft = m * 3.28084;
-  if (ft < 1000) return `${Math.round(ft / 50) * 50 || Math.round(ft)} ft`;
-  const mi = m / 1609.34;
-  return `${mi.toFixed(1)} mi`;
 }
 
 interface TimAlertCardProps {
   item: DisplayItem;
   isTablet?: boolean;
 }
-
-// Safety zones this close get a heavier border instead of the flat
-// treatment used the rest of the approach.
-const URGENT_DISTANCE_M = 150;
 
 // Card enters/exits from off the left edge of the screen (container is left-anchored).
 const OFFSCREEN_X = -320;
@@ -83,7 +73,9 @@ const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, isTablet = false }) =
   // correctly even if reanimated worklets are misbehaving (this repo has no
   // babel.config.js registering the reanimated plugin). Only the outer
   // entrance/exit slide, which doesn't gate content visibility, uses reanimated.
-  const isUrgent = item.category === 'safety' && item.distanceM != null && item.distanceM <= URGENT_DISTANCE_M;
+  // Every card here is a zone the driver is currently inside of, so a safety
+  // zone always gets the heavier treatment — there's no distance to qualify it by.
+  const isUrgent = item.category === 'safety';
 
   // Keyed on item.key by the parent list, so this effect only re-fires the
   // entrance animation when a genuinely new zone appears, not on every tick.
@@ -114,9 +106,7 @@ const TimAlertCard: React.FC<TimAlertCardProps> = ({ item, isTablet = false }) =
               <Text style={[styles.title, isTablet && styles.titleTablet, { color: NEUTRAL.text, textShadowColor: NEUTRAL.shadow }]}>
                 {cfg.label.toUpperCase()}
               </Text>
-              {item.distanceM != null && (
-                <Text style={[styles.distance, isTablet && styles.distanceTablet, { color: NEUTRAL.textSecondary, textShadowColor: NEUTRAL.shadow }]}>{formatDistanceMeters(item.distanceM)} ahead</Text>
-              )}
+              <Text style={[styles.distance, isTablet && styles.distanceTablet, { color: NEUTRAL.textSecondary, textShadowColor: NEUTRAL.shadow }]}>IN ZONE</Text>
             </View>
             <Text style={[styles.description, isTablet && styles.descriptionTablet, { color: NEUTRAL.text, textShadowColor: NEUTRAL.shadow }]} numberOfLines={2}>{item.message}</Text>
           </View>
@@ -170,63 +160,48 @@ export const TimToast: React.FC<TimToastProps> = observer(
       (category === 'regulatory' && settingsViewModel.regulatoryAlerts) ||
       (category === 'informational' && settingsViewModel.informationalAlerts);
 
-    // Ambient toast (not navigating): drains TimService.toastQueue. Persists
-    // until tapped (see TimAlertCard) or until either effect below clears it.
-    const ambientToast = !isNavigating ? timService.toastQueue[0] ?? null : null;
-
-    useEffect(() => {
-      if (!ambientToast) return;
-      if (!categoryEnabled(ambientToast.category)) timService.dismissToast(ambientToast.id);
-    }, [ambientToast?.id, settingsViewModel.safetyAlerts, settingsViewModel.regulatoryAlerts, settingsViewModel.informationalAlerts]);
-
-    // Clears the toast once the user actually enters the zone it's warning
-    // about — at that point it's telling them about where they already are,
-    // not what's ahead. nearbyByCategory[category].inside is the same signal
-    // TimService itself uses to track "inside", checked against the toast's
-    // own zone so entering an unrelated same-category zone doesn't clear it.
-    useEffect(() => {
-      if (!ambientToast) return;
-      const nearby = timService.nearbyByCategory[ambientToast.category];
-      if (nearby?.inside && nearby.timId === ambientToast.timId) {
-        timService.dismissToast(ambientToast.id);
-      }
-    }, [ambientToast?.id, timService.nearbyByCategory]);
-
     const dismiss = (key: string): void => {
       setDismissedKeys((prev) => new Set(prev).add(key));
     };
 
+    // Both branches are the same shape: a card is shown for exactly as long
+    // as the driver is physically inside the zone it's for, and disappears
+    // the instant they leave it — re-entering (even the same zone, later)
+    // shows it again, since the underlying state (RouteViewModel.insideTimZones
+    // / TimService.nearbyByCategory) is recomputed fresh every tick, not a
+    // one-shot queue.
     let rawItems: DisplayItem[];
     if (isNavigating) {
-      // Persistent: stays until the route no longer crosses the zone or the user enters it.
-      rawItems = routeViewModel.approachingTimZones
+      rawItems = routeViewModel.insideTimZones
         .filter((hit) => categoryEnabled(hit.category))
-        .sort((a, b) => (routeViewModel.approachingTimZoneDistancesM.get(a.timId) ?? Infinity) -
-                        (routeViewModel.approachingTimZoneDistancesM.get(b.timId) ?? Infinity))
+        .sort((a, b) => b.severity - a.severity)
         .slice(0, MAX_VISIBLE)
         .map((hit) => {
           const key = `route-${hit.timId}`;
           return {
             key,
             category: hit.category,
-            // `??` only catches null/undefined — the API can send an empty
-            // string too, which would otherwise render as blank text.
-            message: hit.description || `${hit.timType} ahead`,
-            distanceM: routeViewModel.approachingTimZoneDistancesM.get(hit.timId) ?? null,
+            // `||` also catches an empty string — the API can send one,
+            // which would otherwise render as blank text.
+            message: hit.description || formatTimType(hit.timType),
             onDismiss: () => dismiss(key),
           };
         });
-    } else if (ambientToast && categoryEnabled(ambientToast.category)) {
-      const distanceMi = timService.timDistances.get(ambientToast.timId);
-      rawItems = [{
-        key: ambientToast.id,
-        category: ambientToast.category,
-        message: ambientToast.message,
-        distanceM: distanceMi != null ? distanceMi * 1609.34 : null,
-        onDismiss: () => timService.dismissToast(ambientToast.id),
-      }];
     } else {
-      rawItems = [];
+      rawItems = CATEGORY_ORDER
+        .filter((category) => categoryEnabled(category) && timService.nearbyByCategory[category] != null)
+        .map((category) => ({ category, nearby: timService.nearbyByCategory[category]! }))
+        .sort((a, b) => b.nearby.severity - a.nearby.severity)
+        .slice(0, MAX_VISIBLE)
+        .map(({ category, nearby }) => {
+          const key = `ambient-${nearby.timId}`;
+          return {
+            key,
+            category,
+            message: nearby.description || formatTimType(nearby.timType),
+            onDismiss: () => dismiss(key),
+          };
+        });
     }
 
     // A dismissed key stops being suppressed once its zone drops out of the

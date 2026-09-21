@@ -1,10 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Animated, LayoutChangeEvent } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import type { SsmStatus } from '../models/PreemptionModels';
+import type { ClearReason, SsmStatus } from '../models/PreemptionModels';
 import { useResponsiveLayout } from '../../UI/hooks/useResponsiveLayout';
 import { ROUTE_COLORS, ROUTE_FONTS } from '../../UI/appTheme';
-import { useElapsedSeconds } from '../hooks/useElapsedSeconds';
 
 interface PreemptionStatusBannerProps {
   ssmStatus?: SsmStatus;
@@ -26,13 +25,14 @@ interface PreemptionStatusBannerProps {
   // banner just vanishing as if nothing happened, so "cleared" gets its own
   // visible moment the same way "requested" and "granted" already do.
   clearConfirmed?: boolean;
+  // Why the session was cleared (zone exit / manual toggle-off / zone
+  // removed from the dashboard) — shown alongside intersectionName on the
+  // CLEARED/CLEAR NOT CONFIRMED states, in place of the now-hidden elapsed
+  // counter, so a very short-lived grant still tells the driver something.
+  clearReason?: ClearReason;
   // True in the window right after /preempt/start comes back
   // empty/errored — same rising-edge flash treatment as clearConfirmed.
   startFailed?: boolean;
-  // Wall-clock ms timestamp of the rising edge into 'granted', from
-  // PreemptionViewModel.grantedAt. Drives the elapsed-time readout below the
-  // GRANTED label. null when not in a granted session.
-  grantedAt?: number | null;
   top?: number;
   left?: number;
   navOffset?: number;
@@ -56,14 +56,15 @@ const MIN_STATE_DWELL_MS = 600;
 // slow-to-arrive response still has time to land, not so the flash lingers.
 const FLASH_DISPLAY_MS = 3000;
 
-// m:ss count-up for the granted-timer display. Not added to the shared
-// core/utils/formatters.ts (formatDuration there is "X hr Y min" — no other
-// caller needs a short mm:ss form) — single caller, kept local.
-function formatElapsed(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
+// Driver-facing label for each ClearReason — 'unmount' never actually
+// reaches the screen (there's no banner left once the app/screen tears
+// down) but is listed so this stays exhaustive over the type.
+const CLEAR_REASON_LABEL: Record<Exclude<ClearReason, null>, string> = {
+  zone_exit: 'Exited zone',
+  toggled_off: 'Priority turned off',
+  zone_deleted: 'Zone removed',
+  unmount: '',
+};
 
 const STATE_CONFIG: Record<BannerState, {
   label: string;
@@ -123,8 +124,8 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
   feedStale = false,
   clearUnconfirmed = false,
   clearConfirmed = false,
+  clearReason = null,
   startFailed = false,
-  grantedAt = null,
   top,
   left = 16,
   navOffset = 0,
@@ -193,11 +194,6 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
     };
   }, [state]);
 
-  // Keyed off renderedState (not the raw ssmStatus prop) so the timer starts
-  // once the banner has actually settled into showing GRANTED — after the
-  // MIN_STATE_DWELL_MS dwell above — not the instant the underlying state flips.
-  const elapsedSeconds = useElapsedSeconds(renderedState === 'granted', grantedAt);
-
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef<Animated.CompositeAnimation | null>(null);
 
@@ -222,6 +218,20 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
   if (!renderedState) return null;
 
   const config = STATE_CONFIG[renderedState];
+
+  // On CLEARED/CLEAR NOT CONFIRMED, lead with *why* the session ended — a
+  // grant that only lasted a second or two otherwise leaves nothing on
+  // screen to explain that once the elapsed counter (granted-only) resets
+  // away. Falls back to just the zone name when no reason was supplied
+  // (e.g. an older/unrelated clear) or the zone name alone when there's no
+  // reason (there always should be one for a driver-caused clear).
+  const clearReasonLabel = clearReason ? CLEAR_REASON_LABEL[clearReason] : null;
+  const subtitle =
+    (renderedState === 'cleared' || renderedState === 'unconfirmed') && clearReasonLabel
+      ? intersectionName
+        ? `${clearReasonLabel} · ${intersectionName}`
+        : clearReasonLabel
+      : intersectionName;
 
   return (
     <View
@@ -251,14 +261,9 @@ export const PreemptionStatusBanner: React.FC<PreemptionStatusBannerProps> = ({
           >
             {config.label}
           </Text>
-          {renderedState === 'granted' ? (
-            <Text style={[styles.elapsedText, isTablet && styles.elapsedTextTablet]} numberOfLines={1}>
-              {formatElapsed(elapsedSeconds)}
-            </Text>
-          ) : null}
-          {intersectionName ? (
+          {subtitle ? (
             <Text style={[styles.nameText, isTablet && styles.nameTextTablet]} numberOfLines={1}>
-              {intersectionName}
+              {subtitle}
             </Text>
           ) : null}
         </View>
@@ -334,15 +339,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   nameTextTablet: {
-    fontSize: 12,
-  },
-  elapsedText: {
-    fontFamily: ROUTE_FONTS.mono,
-    color: 'rgba(255,255,255,0.85)',
-    fontSize: 9,
-    marginTop: 2,
-  },
-  elapsedTextTablet: {
     fontSize: 12,
   },
 });
